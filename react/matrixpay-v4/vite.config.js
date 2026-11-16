@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { viteSingleFile } from 'vite-plugin-singlefile';
 export default defineConfig({
   base: './',
-  plugins: [react()],
-  build: { chunkSizeWarningLimit: 6000 }
+  plugins: [react(), viteSingleFile()],
+  build: { chunkSizeWarningLimit: 12000, rollupOptions: { output: { inlineDynamicImports: true } } }
 });

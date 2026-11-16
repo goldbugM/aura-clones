@@ -1,0 +1,1328 @@
+<html lang="en"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Brand Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Young+Serif&display=swap">
+<style rel="stylesheet" crossorigin="">
+/*! tailwindcss v4.1.8 | MIT License | https://tailwindcss.com */@layer properties{@supports (((-webkit-hyphens:none)) and (not (margin-trim:inline))) or ((-moz-orient:inline) and (not (color:rgb(from red r g b)))){*,:before,:after,::backdrop{--tw-translate-x:0;--tw-translate-y:0;--tw-translate-z:0;--tw-rotate-x:initial;--tw-rotate-y:initial;--tw-rotate-z:initial;--tw-skew-x:initial;--tw-skew-y:initial;--tw-space-y-reverse:0;--tw-space-x-reverse:0;--tw-divide-y-reverse:0;--tw-border-style:solid;--tw-leading:initial;--tw-font-weight:initial;--tw-tracking:initial;--tw-ordinal:initial;--tw-slashed-zero:initial;--tw-numeric-figure:initial;--tw-numeric-spacing:initial;--tw-numeric-fraction:initial;--tw-shadow:0 0 #0000;--tw-shadow-color:initial;--tw-shadow-alpha:100%;--tw-inset-shadow:0 0 #0000;--tw-inset-shadow-color:initial;--tw-inset-shadow-alpha:100%;--tw-ring-color:initial;--tw-ring-shadow:0 0 #0000;--tw-inset-ring-color:initial;--tw-inset-ring-shadow:0 0 #0000;--tw-ring-inset:initial;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-offset-shadow:0 0 #0000;--tw-outline-style:solid;--tw-blur:initial;--tw-brightness:initial;--tw-contrast:initial;--tw-grayscale:initial;--tw-hue-rotate:initial;--tw-invert:initial;--tw-opacity:initial;--tw-saturate:initial;--tw-sepia:initial;--tw-drop-shadow:initial;--tw-drop-shadow-color:initial;--tw-drop-shadow-alpha:100%;--tw-drop-shadow-size:initial;--tw-backdrop-blur:initial;--tw-backdrop-brightness:initial;--tw-backdrop-contrast:initial;--tw-backdrop-grayscale:initial;--tw-backdrop-hue-rotate:initial;--tw-backdrop-invert:initial;--tw-backdrop-opacity:initial;--tw-backdrop-saturate:initial;--tw-backdrop-sepia:initial;--tw-duration:initial;--tw-ease:initial;--tw-content:"";--tw-divide-x-reverse:0;--tw-animation-delay:0s;--tw-animation-direction:normal;--tw-animation-duration:initial;--tw-animation-fill-mode:none;--tw-animation-iteration-count:1;--tw-enter-opacity:1;--tw-enter-rotate:0;--tw-enter-scale:1;--tw-enter-translate-x:0;--tw-enter-translate-y:0;--tw-exit-opacity:1;--tw-exit-rotate:0;--tw-exit-scale:1;--tw-exit-translate-x:0;--tw-exit-translate-y:0}}}@layer theme{:root,:host{--font-sans:"Archivo","Helvetica Neue",Arial,sans-serif;--font-serif:"Young Serif",Georgia,"Times New Roman",serif;--font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;--color-black:#000;--spacing:.25rem;--container-sm:24rem;--container-md:28rem;--container-lg:32rem;--container-xl:36rem;--container-2xl:42rem;--container-3xl:48rem;--container-4xl:56rem;--text-xs:.75rem;--text-xs--line-height:calc(1/.75);--text-sm:.875rem;--text-sm--line-height:calc(1.25/.875);--text-base:1rem;--text-base--line-height: 1.5 ;--text-lg:1.125rem;--text-lg--line-height:calc(1.75/1.125);--text-xl:1.25rem;--text-xl--line-height:calc(1.75/1.25);--text-2xl:1.5rem;--text-2xl--line-height:calc(2/1.5);--text-3xl:1.875rem;--text-3xl--line-height: 1.2 ;--text-7xl:4.5rem;--text-7xl--line-height:1;--font-weight-normal:400;--font-weight-medium:500;--font-weight-semibold:600;--font-weight-bold:700;--tracking-tight:-.025em;--tracking-widest:.1em;--leading-snug:1.375;--leading-relaxed:1.625;--ease-in-out:cubic-bezier(.4,0,.2,1);--animate-pulse:pulse 2s cubic-bezier(.4,0,.6,1)infinite;--aspect-video:16/9;--default-transition-duration:.15s;--default-transition-timing-function:cubic-bezier(.4,0,.2,1);--default-font-family:"Archivo","Helvetica Neue",Arial,sans-serif;--default-mono-font-family:var(--font-mono);--color-background:var(--background);--color-foreground:var(--foreground);--color-border:var(--border);--color-ink:var(--ink);--color-ink-foreground:var(--ink-foreground);--color-hairline:var(--hairline)}}@layer base{*,:after,:before,::backdrop{box-sizing:border-box;border:0 solid;margin:0;padding:0}::file-selector-button{box-sizing:border-box;border:0 solid;margin:0;padding:0}html,:host{-webkit-text-size-adjust:100%;-moz-tab-size:4;tab-size:4;line-height:1.5;font-family:var(--default-font-family,ui-sans-serif,system-ui,sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji");font-feature-settings:var(--default-font-feature-settings,normal);font-variation-settings:var(--default-font-variation-settings,normal);-webkit-tap-highlight-color:transparent}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;-webkit-text-decoration:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,samp,pre{font-family:var(--default-mono-font-family,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace);font-feature-settings:var(--default-mono-font-feature-settings,normal);font-variation-settings:var(--default-mono-font-variation-settings,normal);font-size:1em}small{font-size:80%}sub,sup{vertical-align:baseline;font-size:75%;line-height:0;position:relative}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}:-moz-focusring{outline:auto}progress{vertical-align:baseline}summary{display:list-item}ol,ul,menu{list-style:none}img,svg,video,canvas,audio,iframe,embed,object{vertical-align:middle;display:block}img,video{max-width:100%;height:auto}button,input,select,optgroup,textarea{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}::file-selector-button{font:inherit;font-feature-settings:inherit;font-variation-settings:inherit;letter-spacing:inherit;color:inherit;opacity:1;background-color:#0000;border-radius:0}:where(select:is([multiple],[size])) optgroup{font-weight:bolder}:where(select:is([multiple],[size])) optgroup option{padding-inline-start:20px}::file-selector-button{margin-inline-end:4px}::placeholder{opacity:1}@supports (not ((-webkit-appearance:-apple-pay-button))) or (contain-intrinsic-size:1px){::placeholder{color:currentColor}@supports (color:color-mix(in lab,red,red)){::placeholder{color:color-mix(in oklab,currentcolor 50%,transparent)}}}textarea{resize:vertical}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-date-and-time-value{min-height:1lh;text-align:inherit}::-webkit-datetime-edit{display:inline-flex}::-webkit-datetime-edit-fields-wrapper{padding:0}::-webkit-datetime-edit{padding-block:0}::-webkit-datetime-edit-year-field{padding-block:0}::-webkit-datetime-edit-month-field{padding-block:0}::-webkit-datetime-edit-day-field{padding-block:0}::-webkit-datetime-edit-hour-field{padding-block:0}::-webkit-datetime-edit-minute-field{padding-block:0}::-webkit-datetime-edit-second-field{padding-block:0}::-webkit-datetime-edit-millisecond-field{padding-block:0}::-webkit-datetime-edit-meridiem-field{padding-block:0}:-moz-ui-invalid{box-shadow:none}button,input:where([type=button],[type=reset],[type=submit]){-webkit-appearance:button;-moz-appearance:button;appearance:button}::file-selector-button{-webkit-appearance:button;-moz-appearance:button;appearance:button}::-webkit-inner-spin-button{height:auto}::-webkit-outer-spin-button{height:auto}[hidden]:where(:not([hidden=until-found])){display:none!important}*{border-color:var(--color-border)}html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}body{background-color:var(--color-background);color:var(--color-foreground);font-family:var(--font-sans);font-synthesis-weight:none}::selection{background-color:var(--color-ink);color:var(--color-ink-foreground)}:focus-visible{outline-offset:3px;outline:2px solid}}@layer components;@layer utilities{.grain-animated{isolation:isolate;position:relative}.grain-animated:after{content:"";z-index:0;pointer-events:none;opacity:.38;mix-blend-mode:multiply;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");animation:10s ease-in-out infinite alternate grain-pulse;position:absolute;top:0;right:0;bottom:0;left:0}.grain{isolation:isolate;position:relative}.grain:after{content:"";z-index:0;pointer-events:none;opacity:.42;mix-blend-mode:multiply;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");position:absolute;top:0;right:0;bottom:0;left:0}.grain-invert{isolation:isolate;position:relative}.grain-invert:after{content:"";z-index:0;pointer-events:none;opacity:.3;mix-blend-mode:screen;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.28'/%3E%3C/svg%3E");position:absolute;top:0;right:0;bottom:0;left:0}.pointer-events-none{pointer-events:none}.invisible{visibility:hidden}.visible{visibility:visible}.rule-link{position:relative}.rule-link:after{content:"";transform-origin:100%;background:currentColor;width:100%;height:1px;transition:transform .42s cubic-bezier(.16,1,.3,1);position:absolute;bottom:-2px;left:0;transform:scaleX(0)}.rule-link:hover:after,.rule-link[data-active=true]:after{transform-origin:0;transform:scaleX(1)}.line-draw{position:relative}.line-draw:after{content:"";background:var(--color-hairline);transform-origin:0;width:100%;height:1px;transition:transform 1.2s cubic-bezier(.16,1,.3,1);position:absolute;bottom:0;left:0;transform:scaleX(0)}.line-draw[data-shown=true]:after{transform:scaleX(1)}.sr-only{clip:rect(0,0,0,0);white-space:nowrap;border-width:0;width:1px;height:1px;margin:-1px;padding:0;position:absolute;overflow:hidden}.absolute{position:absolute}.fixed{position:fixed}.relative{position:relative}.sticky{position:sticky}.inset-0{inset:calc(var(--spacing)*0)}.inset-x-0{inset-inline:calc(var(--spacing)*0)}.inset-y-0{inset-block:calc(var(--spacing)*0)}.-top-12{top:calc(var(--spacing)*-12)}.top-0{top:calc(var(--spacing)*0)}.top-1\.5{top:calc(var(--spacing)*1.5)}.top-1\/2{top:50%}.top-3\.5{top:calc(var(--spacing)*3.5)}.top-4{top:calc(var(--spacing)*4)}.top-\[1px\]{top:1px}.top-\[50\%\]{top:50%}.top-\[60\%\]{top:60%}.top-full{top:100%}.-right-12{right:calc(var(--spacing)*-12)}.right-0{right:calc(var(--spacing)*0)}.right-1{right:calc(var(--spacing)*1)}.right-2{right:calc(var(--spacing)*2)}.right-3{right:calc(var(--spacing)*3)}.right-4{right:calc(var(--spacing)*4)}.-bottom-12{bottom:calc(var(--spacing)*-12)}.bottom-0{bottom:calc(var(--spacing)*0)}.-left-12{left:calc(var(--spacing)*-12)}.left-0{left:calc(var(--spacing)*0)}.left-1\/2{left:50%}.left-2{left:calc(var(--spacing)*2)}.left-\[50\%\]{left:50%}.z-10{z-index:10}.z-20{z-index:20}.z-50{z-index:50}.z-\[1\]{z-index:1}.container{width:100%}@media(min-width:40rem){.container{max-width:40rem}}@media(min-width:48rem){.container{max-width:48rem}}@media(min-width:64rem){.container{max-width:64rem}}@media(min-width:80rem){.container{max-width:80rem}}@media(min-width:96rem){.container{max-width:96rem}}.-mx-1{margin-inline:calc(var(--spacing)*-1)}.mx-2{margin-inline:calc(var(--spacing)*2)}.mx-3\.5{margin-inline:calc(var(--spacing)*3.5)}.mx-auto{margin-inline:auto}.my-0\.5{margin-block:calc(var(--spacing)*.5)}.my-1{margin-block:calc(var(--spacing)*1)}.-mt-4{margin-top:calc(var(--spacing)*-4)}.mt-1\.5{margin-top:calc(var(--spacing)*1.5)}.mt-2{margin-top:calc(var(--spacing)*2)}.mt-3{margin-top:calc(var(--spacing)*3)}.mt-4{margin-top:calc(var(--spacing)*4)}.mt-5{margin-top:calc(var(--spacing)*5)}.mt-6{margin-top:calc(var(--spacing)*6)}.mt-8{margin-top:calc(var(--spacing)*8)}.mt-10{margin-top:calc(var(--spacing)*10)}.mt-12{margin-top:calc(var(--spacing)*12)}.mt-14{margin-top:calc(var(--spacing)*14)}.mt-24{margin-top:calc(var(--spacing)*24)}.mt-auto{margin-top:auto}.mr-2{margin-right:calc(var(--spacing)*2)}.mb-1{margin-bottom:calc(var(--spacing)*1)}.-ml-4{margin-left:calc(var(--spacing)*-4)}.ml-1{margin-left:calc(var(--spacing)*1)}.ml-2{margin-left:calc(var(--spacing)*2)}.ml-auto{margin-left:auto}.marquee{--marquee-duration:40s;width:max-content;animation:marquee var(--marquee-duration)linear infinite;display:flex}.marquee:hover,.marquee[data-paused=true]{animation-play-state:paused}.block{display:block}.flex{display:flex}.grid{display:grid}.hidden{display:none}.inline-flex{display:inline-flex}.table{display:table}.aspect-4\/5,.aspect-\[4\/5\]{aspect-ratio:4/5}.aspect-square{aspect-ratio:1}.aspect-video{aspect-ratio:var(--aspect-video)}.size-\(--cell-size\){width:var(--cell-size);height:var(--cell-size)}.size-4{width:calc(var(--spacing)*4);height:calc(var(--spacing)*4)}.size-5{width:calc(var(--spacing)*5);height:calc(var(--spacing)*5)}.size-11{width:calc(var(--spacing)*11);height:calc(var(--spacing)*11)}.size-14{width:calc(var(--spacing)*14);height:calc(var(--spacing)*14)}.h-\(--cell-size\){height:var(--cell-size)}.h-1\.5{height:calc(var(--spacing)*1.5)}.h-2{height:calc(var(--spacing)*2)}.h-2\.5{height:calc(var(--spacing)*2.5)}.h-3{height:calc(var(--spacing)*3)}.h-3\.5{height:calc(var(--spacing)*3.5)}.h-4{height:calc(var(--spacing)*4)}.h-5{height:calc(var(--spacing)*5)}.h-7{height:calc(var(--spacing)*7)}.h-8{height:calc(var(--spacing)*8)}.h-9{height:calc(var(--spacing)*9)}.h-10{height:calc(var(--spacing)*10)}.h-12{height:calc(var(--spacing)*12)}.h-16{height:calc(var(--spacing)*16)}.h-\[1px\]{height:1px}.h-\[var\(--radix-navigation-menu-viewport-height\)\]{height:var(--radix-navigation-menu-viewport-height)}.h-\[var\(--radix-select-trigger-height\)\]{height:var(--radix-select-trigger-height)}.h-auto{height:auto}.h-full{height:100%}.h-px{height:1px}.h-svh{height:100svh}.max-h-\(--radix-context-menu-content-available-height\){max-height:var(--radix-context-menu-content-available-height)}.max-h-\(--radix-select-content-available-height\){max-height:var(--radix-select-content-available-height)}.max-h-\[300px\]{max-height:300px}.max-h-\[var\(--radix-dropdown-menu-content-available-height\)\]{max-height:var(--radix-dropdown-menu-content-available-height)}.min-h-0{min-height:calc(var(--spacing)*0)}.min-h-11{min-height:calc(var(--spacing)*11)}.min-h-12{min-height:calc(var(--spacing)*12)}.min-h-14{min-height:calc(var(--spacing)*14)}.min-h-20{min-height:calc(var(--spacing)*20)}.min-h-\[60px\]{min-height:60px}.min-h-screen{min-height:100vh}.min-h-svh{min-height:100svh}.w-\(--cell-size\){width:var(--cell-size)}.w-\(--sidebar-width\){width:var(--sidebar-width)}.w-0{width:calc(var(--spacing)*0)}.w-1{width:calc(var(--spacing)*1)}.w-2{width:calc(var(--spacing)*2)}.w-2\.5{width:calc(var(--spacing)*2.5)}.w-3{width:calc(var(--spacing)*3)}.w-3\.5{width:calc(var(--spacing)*3.5)}.w-3\/4{width:75%}.w-4{width:calc(var(--spacing)*4)}.w-5{width:calc(var(--spacing)*5)}.w-7{width:calc(var(--spacing)*7)}.w-8{width:calc(var(--spacing)*8)}.w-9{width:calc(var(--spacing)*9)}.w-10{width:calc(var(--spacing)*10)}.w-64{width:calc(var(--spacing)*64)}.w-72{width:calc(var(--spacing)*72)}.w-\[1px\]{width:1px}.w-\[100px\]{width:100px}.w-auto{width:auto}.w-fit{width:fit-content}.w-full{width:100%}.w-max{width:max-content}.w-px{width:1px}.max-w-\(--skeleton-width\){max-width:var(--skeleton-width)}.max-w-2xl{max-width:var(--container-2xl)}.max-w-3xl{max-width:var(--container-3xl)}.max-w-4xl{max-width:var(--container-4xl)}.max-w-\[1400px\]{max-width:1400px}.max-w-lg{max-width:var(--container-lg)}.max-w-max{max-width:max-content}.max-w-md{max-width:var(--container-md)}.max-w-sm{max-width:var(--container-sm)}.max-w-xl{max-width:var(--container-xl)}.min-w-\(--cell-size\){min-width:var(--cell-size)}.min-w-0{min-width:calc(var(--spacing)*0)}.min-w-5{min-width:calc(var(--spacing)*5)}.min-w-8{min-width:calc(var(--spacing)*8)}.min-w-9{min-width:calc(var(--spacing)*9)}.min-w-10{min-width:calc(var(--spacing)*10)}.min-w-\[8rem\]{min-width:8rem}.min-w-\[12rem\]{min-width:12rem}.min-w-\[var\(--radix-select-trigger-width\)\]{min-width:var(--radix-select-trigger-width)}.flex-1{flex:1}.shrink-0{flex-shrink:0}.grow{flex-grow:1}.grow-0{flex-grow:0}.basis-full{flex-basis:100%}.caption-bottom{caption-side:bottom}.border-collapse{border-collapse:collapse}.origin-\(--radix-context-menu-content-transform-origin\){transform-origin:var(--radix-context-menu-content-transform-origin)}.origin-\(--radix-dropdown-menu-content-transform-origin\){transform-origin:var(--radix-dropdown-menu-content-transform-origin)}.origin-\(--radix-hover-card-content-transform-origin\){transform-origin:var(--radix-hover-card-content-transform-origin)}.origin-\(--radix-menubar-content-transform-origin\){transform-origin:var(--radix-menubar-content-transform-origin)}.origin-\(--radix-popover-content-transform-origin\){transform-origin:var(--radix-popover-content-transform-origin)}.origin-\(--radix-select-content-transform-origin\){transform-origin:var(--radix-select-content-transform-origin)}.origin-\(--radix-tooltip-content-transform-origin\){transform-origin:var(--radix-tooltip-content-transform-origin)}.-translate-x-1\/2{--tw-translate-x: -50% ;translate:var(--tw-translate-x)var(--tw-translate-y)}.-translate-x-px{--tw-translate-x:-1px;translate:var(--tw-translate-x)var(--tw-translate-y)}.translate-x-\[-50\%\]{--tw-translate-x:-50%;translate:var(--tw-translate-x)var(--tw-translate-y)}.translate-x-px{--tw-translate-x:1px;translate:var(--tw-translate-x)var(--tw-translate-y)}.-translate-y-1\/2{--tw-translate-y: -50% ;translate:var(--tw-translate-x)var(--tw-translate-y)}.translate-y-\[-50\%\]{--tw-translate-y:-50%;translate:var(--tw-translate-x)var(--tw-translate-y)}.rotate-45{rotate:45deg}.rotate-90{rotate:90deg}.reveal-stagger>*{opacity:0;transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1);transform:translateY(16px)}.reveal-stagger[data-shown=true]>:first-child{opacity:1;transition-delay:0s;transform:none}.reveal-stagger[data-shown=true]>:nth-child(2){opacity:1;transition-delay:80ms;transform:none}.reveal-stagger[data-shown=true]>:nth-child(3){opacity:1;transition-delay:.16s;transform:none}.reveal-stagger[data-shown=true]>:nth-child(4){opacity:1;transition-delay:.24s;transform:none}.reveal-stagger[data-shown=true]>:nth-child(5){opacity:1;transition-delay:.32s;transform:none}.reveal-stagger[data-shown=true]>:nth-child(6){opacity:1;transition-delay:.4s;transform:none}.reveal-stagger[data-shown=true]>:nth-child(7){opacity:1;transition-delay:.48s;transform:none}.reveal-stagger[data-shown=true]>:nth-child(8){opacity:1;transition-delay:.56s;transform:none}.reveal{opacity:0;transition:opacity .9s cubic-bezier(.16,1,.3,1),transform .9s cubic-bezier(.16,1,.3,1);transform:translateY(18px)}.reveal[data-shown=true]{opacity:1;transform:none}.lift{transition:transform .5s cubic-bezier(.16,1,.3,1),box-shadow .5s cubic-bezier(.16,1,.3,1)}.lift:hover{transform:translateY(-4px);box-shadow:0 18px 40px -16px #0808081a}.photo-hover:hover img{transform:scale(1.02)}.transform{transform:var(--tw-rotate-x,)var(--tw-rotate-y,)var(--tw-rotate-z,)var(--tw-skew-x,)var(--tw-skew-y,)}.animate-caret-blink{animation:1.25s ease-out infinite caret-blink}.animate-in{animation:enter var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.animate-pulse{animation:var(--animate-pulse)}.float{animation:8s ease-in-out infinite float}.cursor-default{cursor:default}.cursor-pointer{cursor:pointer}.touch-none{touch-action:none}.list-none{list-style-type:none}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-col-reverse{flex-direction:column-reverse}.flex-row{flex-direction:row}.flex-wrap{flex-wrap:wrap}.place-content-center{place-content:center}.items-baseline{align-items:baseline}.items-center{align-items:center}.items-end{align-items:flex-end}.items-start{align-items:flex-start}.items-stretch{align-items:stretch}.justify-between{justify-content:space-between}.justify-center{justify-content:center}.gap-1{gap:calc(var(--spacing)*1)}.gap-1\.5{gap:calc(var(--spacing)*1.5)}.gap-2{gap:calc(var(--spacing)*2)}.gap-3{gap:calc(var(--spacing)*3)}.gap-4{gap:calc(var(--spacing)*4)}.gap-6{gap:calc(var(--spacing)*6)}.gap-7{gap:calc(var(--spacing)*7)}.gap-8{gap:calc(var(--spacing)*8)}.gap-10{gap:calc(var(--spacing)*10)}.gap-14{gap:calc(var(--spacing)*14)}.gap-px{gap:1px}:where(.space-y-1\.5>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing)*1.5)*var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing)*1.5)*calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-2>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing)*2)*var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing)*2)*calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-3>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing)*3)*var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing)*3)*calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-4>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing)*4)*var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing)*4)*calc(1 - var(--tw-space-y-reverse)))}:where(.space-y-5>:not(:last-child)){--tw-space-y-reverse:0;margin-block-start:calc(calc(var(--spacing)*5)*var(--tw-space-y-reverse));margin-block-end:calc(calc(var(--spacing)*5)*calc(1 - var(--tw-space-y-reverse)))}:where(.space-x-1>:not(:last-child)){--tw-space-x-reverse:0;margin-inline-start:calc(calc(var(--spacing)*1)*var(--tw-space-x-reverse));margin-inline-end:calc(calc(var(--spacing)*1)*calc(1 - var(--tw-space-x-reverse)))}:where(.divide-y>:not(:last-child)){--tw-divide-y-reverse:0;border-bottom-style:var(--tw-border-style);border-top-style:var(--tw-border-style);border-top-width:calc(1px*var(--tw-divide-y-reverse));border-bottom-width:calc(1px*calc(1 - var(--tw-divide-y-reverse)))}:where(.divide-hairline-invert>:not(:last-child)){border-color:var(--hairline-invert)}.overflow-auto{overflow:auto}.overflow-hidden{overflow:hidden}.overflow-x-hidden{overflow-x:hidden}.overflow-y-auto{overflow-y:auto}.rounded-\[2px\]{border-radius:2px}.rounded-\[inherit\]{border-radius:inherit}.rounded-full{border-radius:3.40282e38px}.rounded-lg{border-radius:calc(var(--radius) + 2px)}.rounded-md{border-radius:var(--radius)}.rounded-none{border-radius:0}.rounded-sm{border-radius:calc(var(--radius) - 2px)}.rounded-xl{border-radius:calc(var(--radius) + 4px)}.rounded-t-\[10px\]{border-top-left-radius:10px;border-top-right-radius:10px}.rounded-l-md{border-top-left-radius:var(--radius);border-bottom-left-radius:var(--radius)}.rounded-tl-sm{border-top-left-radius:calc(var(--radius) - 2px)}.rounded-r-md{border-top-right-radius:var(--radius);border-bottom-right-radius:var(--radius)}.border{border-style:var(--tw-border-style);border-width:1px}.border-2{border-style:var(--tw-border-style);border-width:2px}.border-\[1\.5px\]{border-style:var(--tw-border-style);border-width:1.5px}.border-y{border-block-style:var(--tw-border-style);border-block-width:1px}.border-t{border-top-style:var(--tw-border-style);border-top-width:1px}.border-r{border-right-style:var(--tw-border-style);border-right-width:1px}.border-b{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}.border-l{border-left-style:var(--tw-border-style);border-left-width:1px}.border-dashed{--tw-border-style:dashed;border-style:dashed}.border-\(--color-border\){border-color:var(--color-border)}.border-border\/50{border-color:var(--border)}@supports (color:color-mix(in lab,red,red)){.border-border\/50{border-color:color-mix(in oklab,var(--border)50%,transparent)}}.border-destructive\/50{border-color:var(--destructive)}@supports (color:color-mix(in lab,red,red)){.border-destructive\/50{border-color:color-mix(in oklab,var(--destructive)50%,transparent)}}.border-foreground{border-color:var(--foreground)}.border-hairline{border-color:var(--hairline)}.border-hairline-invert{border-color:var(--hairline-invert)}.border-ink-foreground\/40{border-color:var(--ink-foreground)}@supports (color:color-mix(in lab,red,red)){.border-ink-foreground\/40{border-color:color-mix(in oklab,var(--ink-foreground)40%,transparent)}}.border-input{border-color:var(--input)}.border-primary,.border-primary\/50{border-color:var(--primary)}@supports (color:color-mix(in lab,red,red)){.border-primary\/50{border-color:color-mix(in oklab,var(--primary)50%,transparent)}}.border-transparent{border-color:#0000}.border-t-transparent{border-top-color:#0000}.border-l-transparent{border-left-color:#0000}.bg-\(--color-bg\){background-color:var(--color-bg)}.bg-accent{background-color:var(--accent)}.bg-background,.bg-background\/92{background-color:var(--background)}@supports (color:color-mix(in lab,red,red)){.bg-background\/92{background-color:color-mix(in oklab,var(--background)92%,transparent)}}.bg-black\/80{background-color:#000c}@supports (color:color-mix(in lab,red,red)){.bg-black\/80{background-color:color-mix(in oklab,var(--color-black)80%,transparent)}}.bg-border{background-color:var(--border)}.bg-card{background-color:var(--card)}.bg-destructive{background-color:var(--destructive)}.bg-foreground{background-color:var(--foreground)}.bg-hairline{background-color:var(--hairline)}.bg-hairline-invert{background-color:var(--hairline-invert)}.bg-ink{background-color:var(--ink)}.bg-ink-foreground{background-color:var(--ink-foreground)}.bg-muted,.bg-muted\/50{background-color:var(--muted)}@supports (color:color-mix(in lab,red,red)){.bg-muted\/50{background-color:color-mix(in oklab,var(--muted)50%,transparent)}}.bg-paper-deep{background-color:var(--paper-deep)}.bg-popover{background-color:var(--popover)}.bg-primary,.bg-primary\/10{background-color:var(--primary)}@supports (color:color-mix(in lab,red,red)){.bg-primary\/10{background-color:color-mix(in oklab,var(--primary)10%,transparent)}}.bg-primary\/20{background-color:var(--primary)}@supports (color:color-mix(in lab,red,red)){.bg-primary\/20{background-color:color-mix(in oklab,var(--primary)20%,transparent)}}.bg-secondary{background-color:var(--secondary)}.bg-transparent{background-color:#0000}.fill-current{fill:currentColor}.fill-primary{fill:var(--primary)}.object-cover{object-fit:cover}.object-top{object-position:top}.p-0{padding:calc(var(--spacing)*0)}.p-1{padding:calc(var(--spacing)*1)}.p-2{padding:calc(var(--spacing)*2)}.p-3{padding:calc(var(--spacing)*3)}.p-4{padding:calc(var(--spacing)*4)}.p-6{padding:calc(var(--spacing)*6)}.p-8{padding:calc(var(--spacing)*8)}.p-\[1px\]{padding:1px}.px-\(--cell-size\){padding-inline:var(--cell-size)}.px-1{padding-inline:calc(var(--spacing)*1)}.px-1\.5{padding-inline:calc(var(--spacing)*1.5)}.px-2{padding-inline:calc(var(--spacing)*2)}.px-2\.5{padding-inline:calc(var(--spacing)*2.5)}.px-3{padding-inline:calc(var(--spacing)*3)}.px-4{padding-inline:calc(var(--spacing)*4)}.px-5{padding-inline:calc(var(--spacing)*5)}.px-6{padding-inline:calc(var(--spacing)*6)}.px-8{padding-inline:calc(var(--spacing)*8)}.py-0\.5{padding-block:calc(var(--spacing)*.5)}.py-1{padding-block:calc(var(--spacing)*1)}.py-1\.5{padding-block:calc(var(--spacing)*1.5)}.py-2{padding-block:calc(var(--spacing)*2)}.py-2\.5{padding-block:calc(var(--spacing)*2.5)}.py-3{padding-block:calc(var(--spacing)*3)}.py-3\.5{padding-block:calc(var(--spacing)*3.5)}.py-4{padding-block:calc(var(--spacing)*4)}.py-6{padding-block:calc(var(--spacing)*6)}.py-8{padding-block:calc(var(--spacing)*8)}.py-14{padding-block:calc(var(--spacing)*14)}.py-16{padding-block:calc(var(--spacing)*16)}.py-20{padding-block:calc(var(--spacing)*20)}.pt-0{padding-top:calc(var(--spacing)*0)}.pt-3{padding-top:calc(var(--spacing)*3)}.pt-4{padding-top:calc(var(--spacing)*4)}.pt-6{padding-top:calc(var(--spacing)*6)}.pt-8{padding-top:calc(var(--spacing)*8)}.pt-10{padding-top:calc(var(--spacing)*10)}.pt-12{padding-top:calc(var(--spacing)*12)}.pr-1{padding-right:calc(var(--spacing)*1)}.pr-2{padding-right:calc(var(--spacing)*2)}.pr-2\.5{padding-right:calc(var(--spacing)*2.5)}.pr-8{padding-right:calc(var(--spacing)*8)}.pb-3{padding-bottom:calc(var(--spacing)*3)}.pb-4{padding-bottom:calc(var(--spacing)*4)}.pb-8{padding-bottom:calc(var(--spacing)*8)}.pb-14{padding-bottom:calc(var(--spacing)*14)}.pl-2{padding-left:calc(var(--spacing)*2)}.pl-2\.5{padding-left:calc(var(--spacing)*2.5)}.pl-4{padding-left:calc(var(--spacing)*4)}.pl-8{padding-left:calc(var(--spacing)*8)}.text-center{text-align:center}.text-left{text-align:left}.align-middle{vertical-align:middle}.label-caps{font-family:var(--font-sans);letter-spacing:.22em;text-transform:uppercase;font-size:.6875rem;font-weight:500}.display{font-family:var(--font-serif);letter-spacing:-.02em;font-weight:400;line-height:.94}.font-mono{font-family:var(--font-mono)}.font-sans{font-family:Archivo,Helvetica Neue,Arial,sans-serif}.text-2xl{font-size:var(--text-2xl);line-height:var(--tw-leading,var(--text-2xl--line-height))}.text-3xl{font-size:var(--text-3xl);line-height:var(--tw-leading,var(--text-3xl--line-height))}.text-7xl{font-size:var(--text-7xl);line-height:var(--tw-leading,var(--text-7xl--line-height))}.text-base{font-size:var(--text-base);line-height:var(--tw-leading,var(--text-base--line-height))}.text-lg{font-size:var(--text-lg);line-height:var(--tw-leading,var(--text-lg--line-height))}.text-sm{font-size:var(--text-sm);line-height:var(--tw-leading,var(--text-sm--line-height))}.text-xl{font-size:var(--text-xl);line-height:var(--tw-leading,var(--text-xl--line-height))}.text-xs{font-size:var(--text-xs);line-height:var(--tw-leading,var(--text-xs--line-height))}.text-\[0\.8rem\]{font-size:.8rem}.text-\[clamp\(1\.5rem\,2\.4vw\,2rem\)\]{font-size:clamp(1.5rem,2.4vw,2rem)}.text-\[clamp\(1\.6rem\,2\.8vw\,2\.25rem\)\]{font-size:clamp(1.6rem,2.8vw,2.25rem)}.text-\[clamp\(1\.9rem\,3\.4vw\,2\.75rem\)\]{font-size:clamp(1.9rem,3.4vw,2.75rem)}.text-\[clamp\(1\.15rem\,2vw\,1\.6rem\)\]{font-size:clamp(1.15rem,2vw,1.6rem)}.text-\[clamp\(1\.25rem\,2\.2vw\,1\.75rem\)\]{font-size:clamp(1.25rem,2.2vw,1.75rem)}.text-\[clamp\(1\.25rem\,2vw\,1\.5rem\)\]{font-size:clamp(1.25rem,2vw,1.5rem)}.text-\[clamp\(1\.35rem\,2\.2vw\,1\.6rem\)\]{font-size:clamp(1.35rem,2.2vw,1.6rem)}.text-\[clamp\(1\.75rem\,3\.4vw\,2\.75rem\)\]{font-size:clamp(1.75rem,3.4vw,2.75rem)}.text-\[clamp\(2\.5rem\,4\.6vw\,3\.5rem\)\]{font-size:clamp(2.5rem,4.6vw,3.5rem)}.text-\[clamp\(2\.5rem\,7vw\,6rem\)\]{font-size:clamp(2.5rem,7vw,6rem)}.text-\[clamp\(2\.25rem\,4\.4vw\,4\.25rem\)\]{font-size:clamp(2.25rem,4.4vw,4.25rem)}.text-\[clamp\(2\.25rem\,4\.6vw\,3\.5rem\)\]{font-size:clamp(2.25rem,4.6vw,3.5rem)}.text-\[clamp\(2\.25rem\,5vw\,4rem\)\]{font-size:clamp(2.25rem,5vw,4rem)}.text-\[clamp\(2\.25rem\,6vw\,4\.75rem\)\]{font-size:clamp(2.25rem,6vw,4.75rem)}.text-\[clamp\(2rem\,4\.4vw\,3\.5rem\)\]{font-size:clamp(2rem,4.4vw,3.5rem)}.text-\[clamp\(2rem\,5vw\,4rem\)\]{font-size:clamp(2rem,5vw,4rem)}.text-\[clamp\(3rem\,6vw\,5rem\)\]{font-size:clamp(3rem,6vw,5rem)}.leading-none{--tw-leading:1;line-height:1}.leading-relaxed{--tw-leading:var(--leading-relaxed);line-height:var(--leading-relaxed)}.leading-snug{--tw-leading:var(--leading-snug);line-height:var(--leading-snug)}.font-bold{--tw-font-weight:var(--font-weight-bold);font-weight:var(--font-weight-bold)}.font-medium{--tw-font-weight:var(--font-weight-medium);font-weight:var(--font-weight-medium)}.font-normal{--tw-font-weight:var(--font-weight-normal);font-weight:var(--font-weight-normal)}.font-semibold{--tw-font-weight:var(--font-weight-semibold);font-weight:var(--font-weight-semibold)}.tracking-\[0\.06em\]{--tw-tracking:.06em;letter-spacing:.06em}.tracking-tight{--tw-tracking:var(--tracking-tight);letter-spacing:var(--tracking-tight)}.tracking-widest{--tw-tracking:var(--tracking-widest);letter-spacing:var(--tracking-widest)}.text-balance{text-wrap:balance}.break-words{overflow-wrap:break-word}.whitespace-nowrap{white-space:nowrap}.text-accent-foreground{color:var(--accent-foreground)}.text-background,.text-background\/60{color:var(--background)}@supports (color:color-mix(in lab,red,red)){.text-background\/60{color:color-mix(in oklab,var(--background)60%,transparent)}}.text-background\/80{color:var(--background)}@supports (color:color-mix(in lab,red,red)){.text-background\/80{color:color-mix(in oklab,var(--background)80%,transparent)}}.text-card-foreground{color:var(--card-foreground)}.text-current{color:currentColor}.text-destructive{color:var(--destructive)}.text-destructive-foreground{color:var(--destructive-foreground)}.text-foreground,.text-foreground\/80{color:var(--foreground)}@supports (color:color-mix(in lab,red,red)){.text-foreground\/80{color:color-mix(in oklab,var(--foreground)80%,transparent)}}.text-ink{color:var(--ink)}.text-ink-foreground,.text-ink-foreground\/60{color:var(--ink-foreground)}@supports (color:color-mix(in lab,red,red)){.text-ink-foreground\/60{color:color-mix(in oklab,var(--ink-foreground)60%,transparent)}}.text-ink-foreground\/80{color:var(--ink-foreground)}@supports (color:color-mix(in lab,red,red)){.text-ink-foreground\/80{color:color-mix(in oklab,var(--ink-foreground)80%,transparent)}}.text-muted-foreground{color:var(--muted-foreground)}.text-popover-foreground{color:var(--popover-foreground)}.text-primary{color:var(--primary)}.text-primary-foreground{color:var(--primary-foreground)}.text-secondary-foreground{color:var(--secondary-foreground)}.uppercase{text-transform:uppercase}.tabular-nums{--tw-numeric-spacing:tabular-nums;font-variant-numeric:var(--tw-ordinal,)var(--tw-slashed-zero,)var(--tw-numeric-figure,)var(--tw-numeric-spacing,)var(--tw-numeric-fraction,)}.line-through{text-decoration-line:line-through}.underline{text-decoration-line:underline}.underline-offset-4{text-underline-offset:4px}.opacity-0{opacity:0}.opacity-50{opacity:.5}.opacity-60{opacity:.6}.opacity-70{opacity:.7}.shadow{--tw-shadow:0 1px 3px 0 var(--tw-shadow-color,#0000001a),0 1px 2px -1px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-\[0_0_0_1px_var\(--sidebar-border\)\]{--tw-shadow:0 0 0 1px var(--tw-shadow-color,var(--sidebar-border));box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-lg{--tw-shadow:0 10px 15px -3px var(--tw-shadow-color,#0000001a),0 4px 6px -4px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-md{--tw-shadow:0 4px 6px -1px var(--tw-shadow-color,#0000001a),0 2px 4px -2px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-none{--tw-shadow:0 0 #0000;box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-sm{--tw-shadow:0 1px 3px 0 var(--tw-shadow-color,#0000001a),0 1px 2px -1px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-xl{--tw-shadow:0 20px 25px -5px var(--tw-shadow-color,#0000001a),0 8px 10px -6px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.shadow-xs{--tw-shadow:0 1px 2px 0 var(--tw-shadow-color,#0000000d);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.ring-0{--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(0px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.ring-1{--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(1px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.ring-ring{--tw-ring-color:var(--ring)}.ring-offset-background{--tw-ring-offset-color:var(--background)}.outline{outline-style:var(--tw-outline-style);outline-width:1px}.filter{filter:var(--tw-blur,)var(--tw-brightness,)var(--tw-contrast,)var(--tw-grayscale,)var(--tw-hue-rotate,)var(--tw-invert,)var(--tw-saturate,)var(--tw-sepia,)var(--tw-drop-shadow,)}.backdrop-blur-\[2px\]{--tw-backdrop-blur:blur(2px);-webkit-backdrop-filter:var(--tw-backdrop-blur,)var(--tw-backdrop-brightness,)var(--tw-backdrop-contrast,)var(--tw-backdrop-grayscale,)var(--tw-backdrop-hue-rotate,)var(--tw-backdrop-invert,)var(--tw-backdrop-opacity,)var(--tw-backdrop-saturate,)var(--tw-backdrop-sepia,);backdrop-filter:var(--tw-backdrop-blur,)var(--tw-backdrop-brightness,)var(--tw-backdrop-contrast,)var(--tw-backdrop-grayscale,)var(--tw-backdrop-hue-rotate,)var(--tw-backdrop-invert,)var(--tw-backdrop-opacity,)var(--tw-backdrop-saturate,)var(--tw-backdrop-sepia,)}.transition{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to,opacity,box-shadow,transform,translate,scale,rotate,filter,-webkit-backdrop-filter,backdrop-filter,display,visibility,content-visibility,overlay,pointer-events;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-\[left\,right\,width\]{transition-property:left,right,width;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-\[margin\,opacity\]{transition-property:margin,opacity;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-\[width\,height\,padding\]{transition-property:width,height,padding;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-\[width\]{transition-property:width;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-all{transition-property:all;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-colors{transition-property:color,background-color,border-color,outline-color,text-decoration-color,fill,stroke,--tw-gradient-from,--tw-gradient-via,--tw-gradient-to;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-opacity{transition-property:opacity;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.transition-transform{transition-property:transform,translate,scale,rotate;transition-timing-function:var(--tw-ease,var(--default-transition-timing-function));transition-duration:var(--tw-duration,var(--default-transition-duration))}.duration-200{--tw-duration:.2s;transition-duration:.2s}.duration-300{--tw-duration:.3s;transition-duration:.3s}.duration-500{--tw-duration:.5s;transition-duration:.5s}.duration-1000{--tw-duration:1s;transition-duration:1s}.ease-in-out{--tw-ease:var(--ease-in-out);transition-timing-function:var(--ease-in-out)}.ease-linear{--tw-ease:linear;transition-timing-function:linear}.fade-in-0{--tw-enter-opacity:0}.outline-none{--tw-outline-style:none;outline-style:none}.select-none{-webkit-user-select:none;user-select:none}.zoom-in-95{--tw-enter-scale:.95}.\[--cell-size\:2rem\]{--cell-size:2rem}.marquee-slow{--marquee-duration:60s}.photo{transition:filter .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}.group-focus-within\/menu-item\:opacity-100:is(:where(.group\/menu-item):focus-within *){opacity:1}@media(hover:hover){.group-hover\/menu-item\:opacity-100:is(:where(.group\/menu-item):hover *){opacity:1}}.group-has-\[\[data-sidebar\=menu-action\]\]\/menu-item\:pr-8:is(:where(.group\/menu-item):has([data-sidebar=menu-action]) *){padding-right:calc(var(--spacing)*8)}.group-data-\[collapsible\=icon\]\:-mt-8:is(:where(.group)[data-collapsible=icon] *){margin-top:calc(var(--spacing)*-8)}.group-data-\[collapsible\=icon\]\:hidden:is(:where(.group)[data-collapsible=icon] *){display:none}.group-data-\[collapsible\=icon\]\:\!size-8:is(:where(.group)[data-collapsible=icon] *){width:calc(var(--spacing)*8)!important;height:calc(var(--spacing)*8)!important}.group-data-\[collapsible\=icon\]\:w-\(--sidebar-width-icon\):is(:where(.group)[data-collapsible=icon] *){width:var(--sidebar-width-icon)}.group-data-\[collapsible\=icon\]\:w-\[calc\(var\(--sidebar-width-icon\)_\+_theme\(spacing\.4\)\)\]:is(:where(.group)[data-collapsible=icon] *){width:calc(var(--sidebar-width-icon) + 1rem)}.group-data-\[collapsible\=icon\]\:w-\[calc\(var\(--sidebar-width-icon\)_\+_theme\(spacing\.4\)_\+2px\)\]:is(:where(.group)[data-collapsible=icon] *){width:calc(var(--sidebar-width-icon) + 1rem + 2px)}.group-data-\[collapsible\=icon\]\:overflow-hidden:is(:where(.group)[data-collapsible=icon] *){overflow:hidden}.group-data-\[collapsible\=icon\]\:\!p-0:is(:where(.group)[data-collapsible=icon] *){padding:calc(var(--spacing)*0)!important}.group-data-\[collapsible\=icon\]\:\!p-2:is(:where(.group)[data-collapsible=icon] *){padding:calc(var(--spacing)*2)!important}.group-data-\[collapsible\=icon\]\:opacity-0:is(:where(.group)[data-collapsible=icon] *){opacity:0}.group-data-\[collapsible\=offcanvas\]\:right-\[calc\(var\(--sidebar-width\)\*-1\)\]:is(:where(.group)[data-collapsible=offcanvas] *){right:calc(var(--sidebar-width)*-1)}.group-data-\[collapsible\=offcanvas\]\:left-\[calc\(var\(--sidebar-width\)\*-1\)\]:is(:where(.group)[data-collapsible=offcanvas] *){left:calc(var(--sidebar-width)*-1)}.group-data-\[collapsible\=offcanvas\]\:w-0:is(:where(.group)[data-collapsible=offcanvas] *){width:calc(var(--spacing)*0)}.group-data-\[collapsible\=offcanvas\]\:translate-x-0:is(:where(.group)[data-collapsible=offcanvas] *){--tw-translate-x:calc(var(--spacing)*0);translate:var(--tw-translate-x)var(--tw-translate-y)}.group-data-\[focused\=true\]\/day\:relative:is(:where(.group\/day)[data-focused=true] *){position:relative}.group-data-\[focused\=true\]\/day\:z-10:is(:where(.group\/day)[data-focused=true] *){z-index:10}.group-data-\[focused\=true\]\/day\:border-ring:is(:where(.group\/day)[data-focused=true] *){border-color:var(--ring)}.group-data-\[focused\=true\]\/day\:ring-\[3px\]:is(:where(.group\/day)[data-focused=true] *){--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(3px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.group-data-\[focused\=true\]\/day\:ring-ring\/50:is(:where(.group\/day)[data-focused=true] *){--tw-ring-color:var(--ring)}@supports (color:color-mix(in lab,red,red)){.group-data-\[focused\=true\]\/day\:ring-ring\/50:is(:where(.group\/day)[data-focused=true] *){--tw-ring-color:color-mix(in oklab,var(--ring)50%,transparent)}}.group-data-\[side\=left\]\:-right-4:is(:where(.group)[data-side=left] *){right:calc(var(--spacing)*-4)}.group-data-\[side\=left\]\:border-r:is(:where(.group)[data-side=left] *){border-right-style:var(--tw-border-style);border-right-width:1px}.group-data-\[side\=right\]\:left-0:is(:where(.group)[data-side=right] *){left:calc(var(--spacing)*0)}.group-data-\[side\=right\]\:rotate-180:is(:where(.group)[data-side=right] *){rotate:180deg}.group-data-\[side\=right\]\:border-l:is(:where(.group)[data-side=right] *){border-left-style:var(--tw-border-style);border-left-width:1px}.group-data-\[state\=open\]\:rotate-180:is(:where(.group)[data-state=open] *){rotate:180deg}.group-data-\[variant\=floating\]\:rounded-lg:is(:where(.group)[data-variant=floating] *){border-radius:calc(var(--radius) + 2px)}.group-data-\[variant\=floating\]\:border:is(:where(.group)[data-variant=floating] *){border-style:var(--tw-border-style);border-width:1px}.group-data-\[variant\=floating\]\:shadow:is(:where(.group)[data-variant=floating] *){--tw-shadow:0 1px 3px 0 var(--tw-shadow-color,#0000001a),0 1px 2px -1px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.group-\[\.toast\]\:bg-muted:is(:where(.group).toast *){background-color:var(--muted)}.group-\[\.toast\]\:bg-primary:is(:where(.group).toast *){background-color:var(--primary)}.group-\[\.toast\]\:text-muted-foreground:is(:where(.group).toast *){color:var(--muted-foreground)}.group-\[\.toast\]\:text-primary-foreground:is(:where(.group).toast *){color:var(--primary-foreground)}.group-\[\.toaster\]\:border-border:is(:where(.group).toaster *){border-color:var(--border)}.group-\[\.toaster\]\:bg-background:is(:where(.group).toaster *){background-color:var(--background)}.group-\[\.toaster\]\:text-foreground:is(:where(.group).toaster *){color:var(--foreground)}.group-\[\.toaster\]\:shadow-lg:is(:where(.group).toaster *){--tw-shadow:0 10px 15px -3px var(--tw-shadow-color,#0000001a),0 4px 6px -4px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.peer-disabled\:cursor-not-allowed:is(:where(.peer):disabled~*){cursor:not-allowed}.peer-disabled\:opacity-70:is(:where(.peer):disabled~*){opacity:.7}.peer-data-\[size\=default\]\/menu-button\:top-1\.5:is(:where(.peer\/menu-button)[data-size=default]~*){top:calc(var(--spacing)*1.5)}.peer-data-\[size\=lg\]\/menu-button\:top-2\.5:is(:where(.peer\/menu-button)[data-size=lg]~*){top:calc(var(--spacing)*2.5)}.peer-data-\[size\=sm\]\/menu-button\:top-1:is(:where(.peer\/menu-button)[data-size=sm]~*){top:calc(var(--spacing)*1)}.file\:border-0::file-selector-button{border-style:var(--tw-border-style);border-width:0}.file\:bg-transparent::file-selector-button{background-color:#0000}.file\:text-sm::file-selector-button{font-size:var(--text-sm);line-height:var(--tw-leading,var(--text-sm--line-height))}.file\:font-medium::file-selector-button{--tw-font-weight:var(--font-weight-medium);font-weight:var(--font-weight-medium)}.file\:text-foreground::file-selector-button{color:var(--foreground)}.placeholder\:text-muted-foreground::placeholder{color:var(--muted-foreground)}.after\:absolute:after{content:var(--tw-content);position:absolute}.after\:-inset-2:after{content:var(--tw-content);inset:calc(var(--spacing)*-2)}.after\:inset-y-0:after{content:var(--tw-content);inset-block:calc(var(--spacing)*0)}.after\:left-1\/2:after{content:var(--tw-content);left:50%}.after\:w-1:after{content:var(--tw-content);width:calc(var(--spacing)*1)}.after\:w-\[2px\]:after{content:var(--tw-content);width:2px}.after\:-translate-x-1\/2:after{content:var(--tw-content);--tw-translate-x: -50% ;translate:var(--tw-translate-x)var(--tw-translate-y)}.group-data-\[collapsible\=offcanvas\]\:after\:left-full:is(:where(.group)[data-collapsible=offcanvas] *):after{content:var(--tw-content);left:100%}.first\:rounded-l-md:first-child{border-top-left-radius:var(--radius);border-bottom-left-radius:var(--radius)}.first\:border-l:first-child{border-left-style:var(--tw-border-style);border-left-width:1px}.last\:rounded-r-md:last-child{border-top-right-radius:var(--radius);border-bottom-right-radius:var(--radius)}@media(hover:hover){.hover\:-translate-y-0\.5:hover{--tw-translate-y:calc(var(--spacing)*-.5);translate:var(--tw-translate-x)var(--tw-translate-y)}.hover\:bg-accent:hover{background-color:var(--accent)}.hover\:bg-destructive\/80:hover{background-color:var(--destructive)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-destructive\/80:hover{background-color:color-mix(in oklab,var(--destructive)80%,transparent)}}.hover\:bg-destructive\/90:hover{background-color:var(--destructive)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-destructive\/90:hover{background-color:color-mix(in oklab,var(--destructive)90%,transparent)}}.hover\:bg-ink-foreground:hover,.hover\:bg-ink-foreground\/10:hover{background-color:var(--ink-foreground)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-ink-foreground\/10:hover{background-color:color-mix(in oklab,var(--ink-foreground)10%,transparent)}}.hover\:bg-muted:hover,.hover\:bg-muted\/50:hover{background-color:var(--muted)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-muted\/50:hover{background-color:color-mix(in oklab,var(--muted)50%,transparent)}}.hover\:bg-primary:hover,.hover\:bg-primary\/80:hover{background-color:var(--primary)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-primary\/80:hover{background-color:color-mix(in oklab,var(--primary)80%,transparent)}}.hover\:bg-primary\/90:hover{background-color:var(--primary)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-primary\/90:hover{background-color:color-mix(in oklab,var(--primary)90%,transparent)}}.hover\:bg-secondary\/80:hover{background-color:var(--secondary)}@supports (color:color-mix(in lab,red,red)){.hover\:bg-secondary\/80:hover{background-color:color-mix(in oklab,var(--secondary)80%,transparent)}}.hover\:text-accent-foreground:hover{color:var(--accent-foreground)}.hover\:text-foreground:hover{color:var(--foreground)}.hover\:text-ink:hover{color:var(--ink)}.hover\:text-muted-foreground:hover{color:var(--muted-foreground)}.hover\:text-primary-foreground:hover{color:var(--primary-foreground)}.hover\:no-underline:hover{text-decoration-line:none}.hover\:underline:hover{text-decoration-line:underline}.hover\:opacity-80:hover{opacity:.8}.hover\:opacity-85:hover{opacity:.85}.hover\:opacity-100:hover{opacity:1}.hover\:shadow-\[0_0_0_1px_var\(--sidebar-accent\)\]:hover{--tw-shadow:0 0 0 1px var(--tw-shadow-color,var(--sidebar-accent));box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}}.focus\:not-sr-only:focus{clip:auto;white-space:normal;width:auto;height:auto;margin:0;padding:0;position:static;overflow:visible}.focus\:absolute:focus{position:absolute}.focus\:top-4:focus{top:calc(var(--spacing)*4)}.focus\:left-4:focus{left:calc(var(--spacing)*4)}.focus\:z-\[60\]:focus{z-index:60}.focus\:bg-accent:focus{background-color:var(--accent)}.focus\:bg-primary:focus{background-color:var(--primary)}.focus\:px-5:focus{padding-inline:calc(var(--spacing)*5)}.focus\:py-3:focus{padding-block:calc(var(--spacing)*3)}.focus\:label-caps:focus{font-family:var(--font-sans);letter-spacing:.22em;text-transform:uppercase;font-size:.6875rem;font-weight:500}.focus\:text-accent-foreground:focus{color:var(--accent-foreground)}.focus\:text-primary-foreground:focus{color:var(--primary-foreground)}.focus\:ring-1:focus{--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(1px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.focus\:ring-2:focus{--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(2px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.focus\:ring-ring:focus{--tw-ring-color:var(--ring)}.focus\:ring-offset-2:focus{--tw-ring-offset-width:2px;--tw-ring-offset-shadow:var(--tw-ring-inset,)0 0 0 var(--tw-ring-offset-width)var(--tw-ring-offset-color)}.focus\:outline-none:focus{--tw-outline-style:none;outline-style:none}.focus-visible\:ring-1:focus-visible{--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(1px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.focus-visible\:ring-2:focus-visible{--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(2px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.focus-visible\:ring-ring:focus-visible{--tw-ring-color:var(--ring)}.focus-visible\:ring-offset-1:focus-visible{--tw-ring-offset-width:1px;--tw-ring-offset-shadow:var(--tw-ring-inset,)0 0 0 var(--tw-ring-offset-width)var(--tw-ring-offset-color)}.focus-visible\:ring-offset-2:focus-visible{--tw-ring-offset-width:2px;--tw-ring-offset-shadow:var(--tw-ring-inset,)0 0 0 var(--tw-ring-offset-width)var(--tw-ring-offset-color)}.focus-visible\:ring-offset-background:focus-visible{--tw-ring-offset-color:var(--background)}.focus-visible\:outline-none:focus-visible{--tw-outline-style:none;outline-style:none}.disabled\:pointer-events-none:disabled{pointer-events:none}.disabled\:cursor-not-allowed:disabled{cursor:not-allowed}.disabled\:opacity-50:disabled{opacity:.5}.has-focus\:border-ring:has(:focus){border-color:var(--ring)}.has-focus\:ring-\[3px\]:has(:focus){--tw-ring-shadow:var(--tw-ring-inset,)0 0 0 calc(3px + var(--tw-ring-offset-width))var(--tw-ring-color,currentcolor);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.has-focus\:ring-ring\/50:has(:focus){--tw-ring-color:var(--ring)}@supports (color:color-mix(in lab,red,red)){.has-focus\:ring-ring\/50:has(:focus){--tw-ring-color:color-mix(in oklab,var(--ring)50%,transparent)}}.has-\[\:disabled\]\:opacity-50:has(:disabled){opacity:.5}.aria-disabled\:pointer-events-none[aria-disabled=true]{pointer-events:none}.aria-disabled\:opacity-50[aria-disabled=true]{opacity:.5}.aria-selected\:text-muted-foreground[aria-selected=true]{color:var(--muted-foreground)}.data-\[active\=true\]\:font-medium[data-active=true]{--tw-font-weight:var(--font-weight-medium);font-weight:var(--font-weight-medium)}.data-\[disabled\]\:pointer-events-none[data-disabled]{pointer-events:none}.data-\[disabled\]\:opacity-50[data-disabled]{opacity:.5}.data-\[disabled\=true\]\:pointer-events-none[data-disabled=true]{pointer-events:none}.data-\[disabled\=true\]\:opacity-50[data-disabled=true]{opacity:.5}.data-\[motion\=from-end\]\:slide-in-from-right-52[data-motion=from-end]{--tw-enter-translate-x:calc(52*var(--spacing))}.data-\[motion\=from-start\]\:slide-in-from-left-52[data-motion=from-start]{--tw-enter-translate-x:calc(52*var(--spacing)*-1)}.data-\[motion\=to-end\]\:slide-out-to-right-52[data-motion=to-end]{--tw-exit-translate-x:calc(52*var(--spacing))}.data-\[motion\=to-start\]\:slide-out-to-left-52[data-motion=to-start]{--tw-exit-translate-x:calc(52*var(--spacing)*-1)}.data-\[motion\^\=from-\]\:animate-in[data-motion^=from-]{animation:enter var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.data-\[motion\^\=from-\]\:fade-in[data-motion^=from-]{--tw-enter-opacity:0}.data-\[motion\^\=to-\]\:animate-out[data-motion^=to-]{animation:exit var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.data-\[motion\^\=to-\]\:fade-out[data-motion^=to-]{--tw-exit-opacity:0}.data-\[panel-group-direction\=vertical\]\:h-px[data-panel-group-direction=vertical]{height:1px}.data-\[panel-group-direction\=vertical\]\:w-full[data-panel-group-direction=vertical]{width:100%}.data-\[panel-group-direction\=vertical\]\:flex-col[data-panel-group-direction=vertical]{flex-direction:column}.data-\[panel-group-direction\=vertical\]\:after\:left-0[data-panel-group-direction=vertical]:after{content:var(--tw-content);left:calc(var(--spacing)*0)}.data-\[panel-group-direction\=vertical\]\:after\:h-1[data-panel-group-direction=vertical]:after{content:var(--tw-content);height:calc(var(--spacing)*1)}.data-\[panel-group-direction\=vertical\]\:after\:w-full[data-panel-group-direction=vertical]:after{content:var(--tw-content);width:100%}.data-\[panel-group-direction\=vertical\]\:after\:translate-x-0[data-panel-group-direction=vertical]:after{content:var(--tw-content);--tw-translate-x:calc(var(--spacing)*0);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[panel-group-direction\=vertical\]\:after\:-translate-y-1\/2[data-panel-group-direction=vertical]:after{content:var(--tw-content);--tw-translate-y: -50% ;translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[placeholder\]\:text-muted-foreground[data-placeholder]{color:var(--muted-foreground)}.data-\[range-end\=true\]\:rounded-md[data-range-end=true]{border-radius:var(--radius)}.data-\[range-end\=true\]\:bg-primary[data-range-end=true]{background-color:var(--primary)}.data-\[range-end\=true\]\:text-primary-foreground[data-range-end=true]{color:var(--primary-foreground)}.data-\[range-middle\=true\]\:rounded-none[data-range-middle=true]{border-radius:0}.data-\[range-middle\=true\]\:bg-accent[data-range-middle=true]{background-color:var(--accent)}.data-\[range-middle\=true\]\:text-accent-foreground[data-range-middle=true]{color:var(--accent-foreground)}.data-\[range-start\=true\]\:rounded-md[data-range-start=true]{border-radius:var(--radius)}.data-\[range-start\=true\]\:bg-primary[data-range-start=true]{background-color:var(--primary)}.data-\[range-start\=true\]\:text-primary-foreground[data-range-start=true]{color:var(--primary-foreground)}.data-\[selected-single\=true\]\:bg-primary[data-selected-single=true]{background-color:var(--primary)}.data-\[selected-single\=true\]\:text-primary-foreground[data-selected-single=true]{color:var(--primary-foreground)}.data-\[selected\=true\]\:rounded-none[data-selected=true]{border-radius:0}.data-\[selected\=true\]\:bg-accent[data-selected=true]{background-color:var(--accent)}.data-\[selected\=true\]\:text-accent-foreground[data-selected=true]{color:var(--accent-foreground)}.data-\[side\=bottom\]\:translate-y-1[data-side=bottom]{--tw-translate-y:calc(var(--spacing)*1);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[side\=bottom\]\:slide-in-from-top-2[data-side=bottom]{--tw-enter-translate-y:calc(2*var(--spacing)*-1)}.data-\[side\=left\]\:-translate-x-1[data-side=left]{--tw-translate-x:calc(var(--spacing)*-1);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[side\=left\]\:slide-in-from-right-2[data-side=left]{--tw-enter-translate-x:calc(2*var(--spacing))}.data-\[side\=right\]\:translate-x-1[data-side=right]{--tw-translate-x:calc(var(--spacing)*1);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[side\=right\]\:slide-in-from-left-2[data-side=right]{--tw-enter-translate-x:calc(2*var(--spacing)*-1)}.data-\[side\=top\]\:-translate-y-1[data-side=top]{--tw-translate-y:calc(var(--spacing)*-1);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[side\=top\]\:slide-in-from-bottom-2[data-side=top]{--tw-enter-translate-y:calc(2*var(--spacing))}.data-\[state\=active\]\:bg-background[data-state=active]{background-color:var(--background)}.data-\[state\=active\]\:text-foreground[data-state=active]{color:var(--foreground)}.data-\[state\=active\]\:shadow[data-state=active]{--tw-shadow:0 1px 3px 0 var(--tw-shadow-color,#0000001a),0 1px 2px -1px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.data-\[state\=checked\]\:translate-x-4[data-state=checked]{--tw-translate-x:calc(var(--spacing)*4);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[state\=checked\]\:bg-primary[data-state=checked]{background-color:var(--primary)}.data-\[state\=checked\]\:text-primary-foreground[data-state=checked]{color:var(--primary-foreground)}.data-\[state\=closed\]\:animate-accordion-up[data-state=closed]{animation:accordion-up var(--tw-animation-duration,var(--tw-duration,.2s))ease-out}.data-\[state\=closed\]\:animate-out[data-state=closed]{animation:exit var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.data-\[state\=closed\]\:duration-300[data-state=closed]{--tw-duration:.3s;transition-duration:.3s}.data-\[state\=closed\]\:fade-out-0[data-state=closed]{--tw-exit-opacity:0}.data-\[state\=closed\]\:zoom-out-95[data-state=closed]{--tw-exit-scale:.95}.data-\[state\=closed\]\:slide-out-to-bottom[data-state=closed]{--tw-exit-translate-y:100%}.data-\[state\=closed\]\:slide-out-to-left[data-state=closed]{--tw-exit-translate-x:-100%}.data-\[state\=closed\]\:slide-out-to-right[data-state=closed]{--tw-exit-translate-x:100%}.data-\[state\=closed\]\:slide-out-to-top[data-state=closed]{--tw-exit-translate-y:-100%}.data-\[state\=hidden\]\:animate-out[data-state=hidden]{animation:exit var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.data-\[state\=hidden\]\:fade-out[data-state=hidden]{--tw-exit-opacity:0}.data-\[state\=on\]\:bg-accent[data-state=on]{background-color:var(--accent)}.data-\[state\=on\]\:text-accent-foreground[data-state=on]{color:var(--accent-foreground)}.data-\[state\=open\]\:animate-accordion-down[data-state=open]{animation:accordion-down var(--tw-animation-duration,var(--tw-duration,.2s))ease-out}.data-\[state\=open\]\:animate-in[data-state=open]{animation:enter var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.data-\[state\=open\]\:bg-accent[data-state=open],.data-\[state\=open\]\:bg-accent\/50[data-state=open]{background-color:var(--accent)}@supports (color:color-mix(in lab,red,red)){.data-\[state\=open\]\:bg-accent\/50[data-state=open]{background-color:color-mix(in oklab,var(--accent)50%,transparent)}}.data-\[state\=open\]\:bg-secondary[data-state=open]{background-color:var(--secondary)}.data-\[state\=open\]\:text-accent-foreground[data-state=open]{color:var(--accent-foreground)}.data-\[state\=open\]\:text-muted-foreground[data-state=open]{color:var(--muted-foreground)}.data-\[state\=open\]\:opacity-100[data-state=open]{opacity:1}.data-\[state\=open\]\:duration-500[data-state=open]{--tw-duration:.5s;transition-duration:.5s}.data-\[state\=open\]\:fade-in-0[data-state=open]{--tw-enter-opacity:0}.data-\[state\=open\]\:zoom-in-90[data-state=open]{--tw-enter-scale:.9}.data-\[state\=open\]\:zoom-in-95[data-state=open]{--tw-enter-scale:.95}.data-\[state\=open\]\:slide-in-from-bottom[data-state=open]{--tw-enter-translate-y:100%}.data-\[state\=open\]\:slide-in-from-left[data-state=open]{--tw-enter-translate-x:-100%}.data-\[state\=open\]\:slide-in-from-right[data-state=open]{--tw-enter-translate-x:100%}.data-\[state\=open\]\:slide-in-from-top[data-state=open]{--tw-enter-translate-y:-100%}@media(hover:hover){.data-\[state\=open\]\:hover\:bg-accent[data-state=open]:hover{background-color:var(--accent)}}.data-\[state\=open\]\:focus\:bg-accent[data-state=open]:focus{background-color:var(--accent)}.data-\[state\=selected\]\:bg-muted[data-state=selected]{background-color:var(--muted)}.data-\[state\=unchecked\]\:translate-x-0[data-state=unchecked]{--tw-translate-x:calc(var(--spacing)*0);translate:var(--tw-translate-x)var(--tw-translate-y)}.data-\[state\=unchecked\]\:bg-input[data-state=unchecked]{background-color:var(--input)}.data-\[state\=visible\]\:animate-in[data-state=visible]{animation:enter var(--tw-animation-duration,var(--tw-duration,.15s))var(--tw-ease,ease)var(--tw-animation-delay,0s)var(--tw-animation-iteration-count,1)var(--tw-animation-direction,normal)var(--tw-animation-fill-mode,none)}.data-\[state\=visible\]\:fade-in[data-state=visible]{--tw-enter-opacity:0}@media(min-width:40rem){.sm\:col-span-2{grid-column:span 2/span 2}.sm\:mt-0{margin-top:calc(var(--spacing)*0)}.sm\:mt-12{margin-top:calc(var(--spacing)*12)}.sm\:flex{display:flex}.sm\:h-20{height:calc(var(--spacing)*20)}.sm\:w-auto{width:auto}.sm\:max-w-sm{max-width:var(--container-sm)}.sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.sm\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.sm\:flex-row{flex-direction:row}.sm\:flex-wrap{flex-wrap:wrap}.sm\:justify-end{justify-content:flex-end}.sm\:gap-2\.5{gap:calc(var(--spacing)*2.5)}.sm\:gap-4{gap:calc(var(--spacing)*4)}.sm\:gap-10{gap:calc(var(--spacing)*10)}.sm\:gap-12{gap:calc(var(--spacing)*12)}.sm\:gap-16{gap:calc(var(--spacing)*16)}:where(.sm\:space-x-2>:not(:last-child)){--tw-space-x-reverse:0;margin-inline-start:calc(calc(var(--spacing)*2)*var(--tw-space-x-reverse));margin-inline-end:calc(calc(var(--spacing)*2)*calc(1 - var(--tw-space-x-reverse)))}:where(.sm\:divide-x>:not(:last-child)){--tw-divide-x-reverse:0;border-inline-style:var(--tw-border-style);border-inline-start-width:calc(1px*var(--tw-divide-x-reverse));border-inline-end-width:calc(1px*calc(1 - var(--tw-divide-x-reverse)))}:where(.sm\:divide-y-0>:not(:last-child)){--tw-divide-y-reverse:0;border-bottom-style:var(--tw-border-style);border-top-style:var(--tw-border-style);border-top-width:calc(0px*var(--tw-divide-y-reverse));border-bottom-width:calc(0px*calc(1 - var(--tw-divide-y-reverse)))}.sm\:rounded-lg{border-radius:calc(var(--radius) + 2px)}.sm\:p-8{padding:calc(var(--spacing)*8)}.sm\:p-10{padding:calc(var(--spacing)*10)}.sm\:px-6{padding-inline:calc(var(--spacing)*6)}.sm\:px-8{padding-inline:calc(var(--spacing)*8)}.sm\:py-10{padding-block:calc(var(--spacing)*10)}.sm\:py-20{padding-block:calc(var(--spacing)*20)}.sm\:py-24{padding-block:calc(var(--spacing)*24)}.sm\:text-left{text-align:left}.sm\:text-2xl{font-size:var(--text-2xl);line-height:var(--tw-leading,var(--text-2xl--line-height))}.sm\:text-lg{font-size:var(--text-lg);line-height:var(--tw-leading,var(--text-lg--line-height))}.sm\:first\:pl-0:first-child{padding-left:calc(var(--spacing)*0)}.sm\:last\:pr-0:last-child{padding-right:calc(var(--spacing)*0)}}@media(min-width:48rem){.md\:absolute{position:absolute}.md\:order-1{order:1}.md\:order-2{order:2}.md\:col-span-3{grid-column:span 3/span 3}.md\:col-span-5{grid-column:span 5/span 5}.md\:col-span-6{grid-column:span 6/span 6}.md\:col-span-7{grid-column:span 7/span 7}.md\:col-span-8{grid-column:span 8/span 8}.md\:mt-14{margin-top:calc(var(--spacing)*14)}.md\:mt-16{margin-top:calc(var(--spacing)*16)}.md\:mt-20{margin-top:calc(var(--spacing)*20)}.md\:block{display:block}.md\:flex{display:flex}.md\:w-\[var\(--radix-navigation-menu-viewport-width\)\]{width:var(--radix-navigation-menu-viewport-width)}.md\:w-auto{width:auto}.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.md\:grid-cols-12{grid-template-columns:repeat(12,minmax(0,1fr))}.md\:grid-cols-\[160px_1fr\]{grid-template-columns:160px 1fr}.md\:flex-row{flex-direction:row}.md\:items-center{align-items:center}.md\:justify-between{justify-content:space-between}.md\:gap-6{gap:calc(var(--spacing)*6)}.md\:gap-10{gap:calc(var(--spacing)*10)}.md\:gap-20{gap:calc(var(--spacing)*20)}.md\:p-10{padding:calc(var(--spacing)*10)}.md\:p-12{padding:calc(var(--spacing)*12)}.md\:px-10{padding-inline:calc(var(--spacing)*10)}.md\:py-12{padding-block:calc(var(--spacing)*12)}.md\:py-20{padding-block:calc(var(--spacing)*20)}.md\:py-24{padding-block:calc(var(--spacing)*24)}.md\:py-32{padding-block:calc(var(--spacing)*32)}.md\:pt-20{padding-top:calc(var(--spacing)*20)}.md\:pb-20{padding-bottom:calc(var(--spacing)*20)}.md\:text-left{text-align:left}.md\:text-right{text-align:right}.md\:text-sm{font-size:var(--text-sm);line-height:var(--tw-leading,var(--text-sm--line-height))}.md\:opacity-0{opacity:0}.md\:peer-data-\[variant\=inset\]\:m-2:is(:where(.peer)[data-variant=inset]~*){margin:calc(var(--spacing)*2)}.md\:peer-data-\[variant\=inset\]\:ml-0:is(:where(.peer)[data-variant=inset]~*){margin-left:calc(var(--spacing)*0)}.md\:peer-data-\[variant\=inset\]\:rounded-xl:is(:where(.peer)[data-variant=inset]~*){border-radius:calc(var(--radius) + 4px)}.md\:peer-data-\[variant\=inset\]\:shadow:is(:where(.peer)[data-variant=inset]~*){--tw-shadow:0 1px 3px 0 var(--tw-shadow-color,#0000001a),0 1px 2px -1px var(--tw-shadow-color,#0000001a);box-shadow:var(--tw-inset-shadow),var(--tw-inset-ring-shadow),var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow)}.md\:peer-data-\[state\=collapsed\]\:peer-data-\[variant\=inset\]\:ml-2:is(:where(.peer)[data-state=collapsed]~*):is(:where(.peer)[data-variant=inset]~*){margin-left:calc(var(--spacing)*2)}}.after\:md\:hidden:after{content:var(--tw-content)}@media(min-width:48rem){.after\:md\:hidden:after{display:none}}@media(min-width:64rem){.lg\:order-1{order:1}.lg\:order-2{order:2}.lg\:col-span-4{grid-column:span 4/span 4}.lg\:col-span-5{grid-column:span 5/span 5}.lg\:col-span-7{grid-column:span 7/span 7}.lg\:col-span-8{grid-column:span 8/span 8}.lg\:mt-20{margin-top:calc(var(--spacing)*20)}.lg\:mt-24{margin-top:calc(var(--spacing)*24)}.lg\:flex{display:flex}.lg\:hidden{display:none}.lg\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.lg\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.lg\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.lg\:grid-cols-6{grid-template-columns:repeat(6,minmax(0,1fr))}.lg\:grid-cols-12{grid-template-columns:repeat(12,minmax(0,1fr))}.lg\:gap-8{gap:calc(var(--spacing)*8)}.lg\:gap-14{gap:calc(var(--spacing)*14)}.lg\:gap-28{gap:calc(var(--spacing)*28)}.lg\:p-12{padding:calc(var(--spacing)*12)}.lg\:py-32{padding-block:calc(var(--spacing)*32)}.lg\:py-40{padding-block:calc(var(--spacing)*40)}.lg\:pt-24{padding-top:calc(var(--spacing)*24)}.lg\:pb-24{padding-bottom:calc(var(--spacing)*24)}}@media(min-width:80rem){.xl\:gap-9{gap:calc(var(--spacing)*9)}}.dark\:border-destructive:is(.dark *){border-color:var(--destructive)}.\[\&_\.recharts-cartesian-axis-tick_text\]\:fill-muted-foreground .recharts-cartesian-axis-tick text{fill:var(--muted-foreground)}.\[\&_\.recharts-cartesian-grid_line\[stroke\=\'\#ccc\'\]\]\:stroke-border\/50 .recharts-cartesian-grid line[stroke="#ccc"]{stroke:var(--border)}@supports (color:color-mix(in lab,red,red)){.\[\&_\.recharts-cartesian-grid_line\[stroke\=\'\#ccc\'\]\]\:stroke-border\/50 .recharts-cartesian-grid line[stroke="#ccc"]{stroke:color-mix(in oklab,var(--border)50%,transparent)}}.\[\&_\.recharts-curve\.recharts-tooltip-cursor\]\:stroke-border .recharts-curve.recharts-tooltip-cursor{stroke:var(--border)}.\[\&_\.recharts-dot\[stroke\=\'\#fff\'\]\]\:stroke-transparent .recharts-dot[stroke="#fff"]{stroke:#0000}.\[\&_\.recharts-layer\]\:outline-none .recharts-layer{--tw-outline-style:none;outline-style:none}.\[\&_\.recharts-polar-grid_\[stroke\=\'\#ccc\'\]\]\:stroke-border .recharts-polar-grid [stroke="#ccc"]{stroke:var(--border)}.\[\&_\.recharts-radial-bar-background-sector\]\:fill-muted .recharts-radial-bar-background-sector,.\[\&_\.recharts-rectangle\.recharts-tooltip-cursor\]\:fill-muted .recharts-rectangle.recharts-tooltip-cursor{fill:var(--muted)}.\[\&_\.recharts-reference-line_\[stroke\=\'\#ccc\'\]\]\:stroke-border .recharts-reference-line [stroke="#ccc"]{stroke:var(--border)}.\[\&_\.recharts-sector\]\:outline-none .recharts-sector{--tw-outline-style:none;outline-style:none}.\[\&_\.recharts-sector\[stroke\=\'\#fff\'\]\]\:stroke-transparent .recharts-sector[stroke="#fff"]{stroke:#0000}.\[\&_\.recharts-surface\]\:outline-none .recharts-surface{--tw-outline-style:none;outline-style:none}.\[\&_\[cmdk-group-heading\]\]\:px-2 [cmdk-group-heading]{padding-inline:calc(var(--spacing)*2)}.\[\&_\[cmdk-group-heading\]\]\:py-1\.5 [cmdk-group-heading]{padding-block:calc(var(--spacing)*1.5)}.\[\&_\[cmdk-group-heading\]\]\:text-xs [cmdk-group-heading]{font-size:var(--text-xs);line-height:var(--tw-leading,var(--text-xs--line-height))}.\[\&_\[cmdk-group-heading\]\]\:font-medium [cmdk-group-heading]{--tw-font-weight:var(--font-weight-medium);font-weight:var(--font-weight-medium)}.\[\&_\[cmdk-group-heading\]\]\:text-muted-foreground [cmdk-group-heading]{color:var(--muted-foreground)}.\[\&_\[cmdk-group\]\]\:px-2 [cmdk-group]{padding-inline:calc(var(--spacing)*2)}.\[\&_\[cmdk-group\]\:not\(\[hidden\]\)_\~\[cmdk-group\]\]\:pt-0 [cmdk-group]:not([hidden])~[cmdk-group]{padding-top:calc(var(--spacing)*0)}.\[\&_\[cmdk-input-wrapper\]_svg\]\:h-5 [cmdk-input-wrapper] svg{height:calc(var(--spacing)*5)}.\[\&_\[cmdk-input-wrapper\]_svg\]\:w-5 [cmdk-input-wrapper] svg{width:calc(var(--spacing)*5)}.\[\&_\[cmdk-input\]\]\:h-12 [cmdk-input]{height:calc(var(--spacing)*12)}.\[\&_\[cmdk-item\]\]\:px-2 [cmdk-item]{padding-inline:calc(var(--spacing)*2)}.\[\&_\[cmdk-item\]\]\:py-3 [cmdk-item]{padding-block:calc(var(--spacing)*3)}.\[\&_\[cmdk-item\]_svg\]\:h-5 [cmdk-item] svg{height:calc(var(--spacing)*5)}.\[\&_\[cmdk-item\]_svg\]\:w-5 [cmdk-item] svg{width:calc(var(--spacing)*5)}.\[\&_p\]\:leading-relaxed p{--tw-leading:var(--leading-relaxed);line-height:var(--leading-relaxed)}.\[\&_svg\]\:pointer-events-none svg{pointer-events:none}.\[\&_svg\]\:size-4 svg{width:calc(var(--spacing)*4);height:calc(var(--spacing)*4)}.\[\&_svg\]\:shrink-0 svg{flex-shrink:0}.\[\&_tr\]\:border-b tr{border-bottom-style:var(--tw-border-style);border-bottom-width:1px}.\[\&_tr\:last-child\]\:border-0 tr:last-child{border-style:var(--tw-border-style);border-width:0}.\[\&\:first-child\[data-selected\=true\]_button\]\:rounded-l-md:first-child[data-selected=true] button{border-top-left-radius:var(--radius);border-bottom-left-radius:var(--radius)}.\[\&\:has\(\[role\=checkbox\]\)\]\:pr-0:has([role=checkbox]){padding-right:calc(var(--spacing)*0)}:is(.rtl\:\*\*\:\[\.rdp-button\\_next\>svg\]\:rotate-180:where(:dir(rtl),[dir=rtl],[dir=rtl] *) *):is(.rdp-button_next>svg),:is(.rtl\:\*\*\:\[\.rdp-button\\_previous\>svg\]\:rotate-180:where(:dir(rtl),[dir=rtl],[dir=rtl] *) *):is(.rdp-button_previous>svg){rotate:180deg}.\[\&\:last-child\[data-selected\=true\]_button\]\:rounded-r-md:last-child[data-selected=true] button{border-top-right-radius:var(--radius);border-bottom-right-radius:var(--radius)}.\[\&\>\[role\=checkbox\]\]\:translate-y-\[2px\]>[role=checkbox]{--tw-translate-y:2px;translate:var(--tw-translate-x)var(--tw-translate-y)}.\[\&\>button\]\:hidden>button{display:none}.\[\&\>span\]\:line-clamp-1>span{-webkit-line-clamp:1;-webkit-box-orient:vertical;display:-webkit-box;overflow:hidden}.\[\&\>span\]\:text-xs>span{font-size:var(--text-xs);line-height:var(--tw-leading,var(--text-xs--line-height))}.\[\&\>span\]\:opacity-70>span{opacity:.7}.\[\&\>span\:last-child\]\:truncate>span:last-child{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.\[\&\>svg\]\:absolute>svg{position:absolute}.\[\&\>svg\]\:top-4>svg{top:calc(var(--spacing)*4)}.\[\&\>svg\]\:left-4>svg{left:calc(var(--spacing)*4)}.\[\&\>svg\]\:size-3\.5>svg{width:calc(var(--spacing)*3.5);height:calc(var(--spacing)*3.5)}.\[\&\>svg\]\:size-4>svg{width:calc(var(--spacing)*4);height:calc(var(--spacing)*4)}.\[\&\>svg\]\:h-2\.5>svg{height:calc(var(--spacing)*2.5)}.\[\&\>svg\]\:h-3>svg{height:calc(var(--spacing)*3)}.\[\&\>svg\]\:h-3\.5>svg{height:calc(var(--spacing)*3.5)}.\[\&\>svg\]\:w-2\.5>svg{width:calc(var(--spacing)*2.5)}.\[\&\>svg\]\:w-3>svg{width:calc(var(--spacing)*3)}.\[\&\>svg\]\:w-3\.5>svg{width:calc(var(--spacing)*3.5)}.\[\&\>svg\]\:shrink-0>svg{flex-shrink:0}.\[\&\>svg\]\:text-destructive>svg{color:var(--destructive)}.\[\&\>svg\]\:text-foreground>svg{color:var(--foreground)}.\[\&\>svg\]\:text-muted-foreground>svg{color:var(--muted-foreground)}.\[\&\>svg\+div\]\:translate-y-\[-3px\]>svg+div{--tw-translate-y:-3px;translate:var(--tw-translate-x)var(--tw-translate-y)}.\[\&\>svg\~\*\]\:pl-7>svg~*{padding-left:calc(var(--spacing)*7)}.\[\&\>tr\]\:last\:border-b-0>tr:last-child{border-bottom-style:var(--tw-border-style);border-bottom-width:0}.\[\&\[data-panel-group-direction\=vertical\]\>div\]\:rotate-90[data-panel-group-direction=vertical]>div{rotate:90deg}.\[\&\[data-state\=open\]\>svg\]\:rotate-180[data-state=open]>svg{rotate:180deg}[data-side=left] .\[\[data-side\=left\]_\&\]\:cursor-w-resize{cursor:w-resize}[data-side=left][data-collapsible=offcanvas] .\[\[data-side\=left\]\[data-collapsible\=offcanvas\]_\&\]\:-right-2{right:calc(var(--spacing)*-2)}[data-side=left][data-state=collapsed] .\[\[data-side\=left\]\[data-state\=collapsed\]_\&\]\:cursor-e-resize,[data-side=right] .\[\[data-side\=right\]_\&\]\:cursor-e-resize{cursor:e-resize}[data-side=right][data-collapsible=offcanvas] .\[\[data-side\=right\]\[data-collapsible\=offcanvas\]_\&\]\:-left-2{left:calc(var(--spacing)*-2)}[data-side=right][data-state=collapsed] .\[\[data-side\=right\]\[data-state\=collapsed\]_\&\]\:cursor-w-resize{cursor:w-resize}[data-slot=card-content] .\[\[data-slot\=card-content\]_\&\]\:bg-transparent,[data-slot=popover-content] .\[\[data-slot\=popover-content\]_\&\]\:bg-transparent{background-color:#0000}}@property --tw-animation-delay{syntax:"*";inherits:false;initial-value:0s}@property --tw-animation-direction{syntax:"*";inherits:false;initial-value:normal}@property --tw-animation-duration{syntax:"*";inherits:false}@property --tw-animation-fill-mode{syntax:"*";inherits:false;initial-value:none}@property --tw-animation-iteration-count{syntax:"*";inherits:false;initial-value:1}@property --tw-enter-opacity{syntax:"*";inherits:false;initial-value:1}@property --tw-enter-rotate{syntax:"*";inherits:false;initial-value:0}@property --tw-enter-scale{syntax:"*";inherits:false;initial-value:1}@property --tw-enter-translate-x{syntax:"*";inherits:false;initial-value:0}@property --tw-enter-translate-y{syntax:"*";inherits:false;initial-value:0}@property --tw-exit-opacity{syntax:"*";inherits:false;initial-value:1}@property --tw-exit-rotate{syntax:"*";inherits:false;initial-value:0}@property --tw-exit-scale{syntax:"*";inherits:false;initial-value:1}@property --tw-exit-translate-x{syntax:"*";inherits:false;initial-value:0}@property --tw-exit-translate-y{syntax:"*";inherits:false;initial-value:0}:root{--radius:.125rem;--ink:oklch(13.2% 0 0);--ink-foreground:oklch(97.2% .006 92);--paper:oklch(98.2% .004 92);--paper-deep:oklch(95.5% .008 92);--stone:oklch(62% .005 90);--hairline:oklch(13.2% 0 0/.14);--hairline-invert:oklch(97.2% .006 92/.18);--background:var(--paper);--foreground:var(--ink);--card:var(--paper-deep);--card-foreground:var(--ink);--popover:var(--paper);--popover-foreground:var(--ink);--primary:var(--ink);--primary-foreground:var(--ink-foreground);--secondary:var(--paper-deep);--secondary-foreground:var(--ink);--muted:var(--paper-deep);--muted-foreground:oklch(44% .004 90);--accent:var(--paper-deep);--accent-foreground:var(--ink);--destructive:oklch(44% .13 28);--destructive-foreground:var(--ink-foreground);--border:var(--hairline);--input:var(--hairline);--ring:oklch(13.2% 0 0/.55)}@keyframes marquee{0%{transform:translate(0)}to{transform:translate(-50%)}}@keyframes float{0%,to{transform:translateY(0)}50%{transform:translateY(-6px)}}@keyframes grain-pulse{0%{opacity:.32}50%{opacity:.44}to{opacity:.36}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:before,:after{transition-duration:.001ms!important;animation-duration:.001ms!important;animation-iteration-count:1!important}.reveal,.reveal-stagger>*{opacity:1!important;transform:none!important}.line-draw:after{transform:scaleX(1)!important}}@property --tw-translate-x{syntax:"*";inherits:false;initial-value:0}@property --tw-translate-y{syntax:"*";inherits:false;initial-value:0}@property --tw-translate-z{syntax:"*";inherits:false;initial-value:0}@property --tw-rotate-x{syntax:"*";inherits:false}@property --tw-rotate-y{syntax:"*";inherits:false}@property --tw-rotate-z{syntax:"*";inherits:false}@property --tw-skew-x{syntax:"*";inherits:false}@property --tw-skew-y{syntax:"*";inherits:false}@property --tw-space-y-reverse{syntax:"*";inherits:false;initial-value:0}@property --tw-space-x-reverse{syntax:"*";inherits:false;initial-value:0}@property --tw-divide-y-reverse{syntax:"*";inherits:false;initial-value:0}@property --tw-border-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-leading{syntax:"*";inherits:false}@property --tw-font-weight{syntax:"*";inherits:false}@property --tw-tracking{syntax:"*";inherits:false}@property --tw-ordinal{syntax:"*";inherits:false}@property --tw-slashed-zero{syntax:"*";inherits:false}@property --tw-numeric-figure{syntax:"*";inherits:false}@property --tw-numeric-spacing{syntax:"*";inherits:false}@property --tw-numeric-fraction{syntax:"*";inherits:false}@property --tw-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-shadow-color{syntax:"*";inherits:false}@property --tw-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-inset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-shadow-color{syntax:"*";inherits:false}@property --tw-inset-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-ring-color{syntax:"*";inherits:false}@property --tw-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-inset-ring-color{syntax:"*";inherits:false}@property --tw-inset-ring-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-ring-inset{syntax:"*";inherits:false}@property --tw-ring-offset-width{syntax:"<length>";inherits:false;initial-value:0}@property --tw-ring-offset-color{syntax:"*";inherits:false;initial-value:#fff}@property --tw-ring-offset-shadow{syntax:"*";inherits:false;initial-value:0 0 #0000}@property --tw-outline-style{syntax:"*";inherits:false;initial-value:solid}@property --tw-blur{syntax:"*";inherits:false}@property --tw-brightness{syntax:"*";inherits:false}@property --tw-contrast{syntax:"*";inherits:false}@property --tw-grayscale{syntax:"*";inherits:false}@property --tw-hue-rotate{syntax:"*";inherits:false}@property --tw-invert{syntax:"*";inherits:false}@property --tw-opacity{syntax:"*";inherits:false}@property --tw-saturate{syntax:"*";inherits:false}@property --tw-sepia{syntax:"*";inherits:false}@property --tw-drop-shadow{syntax:"*";inherits:false}@property --tw-drop-shadow-color{syntax:"*";inherits:false}@property --tw-drop-shadow-alpha{syntax:"<percentage>";inherits:false;initial-value:100%}@property --tw-drop-shadow-size{syntax:"*";inherits:false}@property --tw-backdrop-blur{syntax:"*";inherits:false}@property --tw-backdrop-brightness{syntax:"*";inherits:false}@property --tw-backdrop-contrast{syntax:"*";inherits:false}@property --tw-backdrop-grayscale{syntax:"*";inherits:false}@property --tw-backdrop-hue-rotate{syntax:"*";inherits:false}@property --tw-backdrop-invert{syntax:"*";inherits:false}@property --tw-backdrop-opacity{syntax:"*";inherits:false}@property --tw-backdrop-saturate{syntax:"*";inherits:false}@property --tw-backdrop-sepia{syntax:"*";inherits:false}@property --tw-duration{syntax:"*";inherits:false}@property --tw-ease{syntax:"*";inherits:false}@property --tw-content{syntax:"*";inherits:false;initial-value:""}@property --tw-divide-x-reverse{syntax:"*";inherits:false;initial-value:0}@keyframes pulse{50%{opacity:.5}}@keyframes enter{0%{opacity:var(--tw-enter-opacity,1);transform:translate3d(var(--tw-enter-translate-x,0),var(--tw-enter-translate-y,0),0)scale3d(var(--tw-enter-scale,1),var(--tw-enter-scale,1),var(--tw-enter-scale,1))rotate(var(--tw-enter-rotate,0))}}@keyframes exit{to{opacity:var(--tw-exit-opacity,1);transform:translate3d(var(--tw-exit-translate-x,0),var(--tw-exit-translate-y,0),0)scale3d(var(--tw-exit-scale,1),var(--tw-exit-scale,1),var(--tw-exit-scale,1))rotate(var(--tw-exit-rotate,0))}}@keyframes accordion-down{0%{height:0}to{height:var(--radix-accordion-content-height,var(--bits-accordion-content-height,var(--reka-accordion-content-height,var(--kb-accordion-content-height,auto))))}}@keyframes accordion-up{0%{height:var(--radix-accordion-content-height,var(--bits-accordion-content-height,var(--reka-accordion-content-height,var(--kb-accordion-content-height,auto))))}to{height:0}}@keyframes caret-blink{0%,70%,to{opacity:1}20%,50%{opacity:0}}
+</style>
+<style>
+.faq-summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1rem}.faq-summary::-webkit-details-marker{display:none}.faq-summary svg{transition:transform .2s}details[open]>.faq-summary svg{transform:rotate(180deg)}.faq-answer{padding-bottom:2rem;max-width:42rem;font-size:1rem;line-height:1.625;color:var(--muted-foreground)}
+</style>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+  <body class="">
+    <div id="root" class="">
+      <div id="top" class="min-h-screen bg-background text-foreground">
+        <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:bg-primary focus:px-5 focus:py-3 focus:text-primary-foreground focus:label-caps">
+          Skip to content
+        </a>
+        <div class="grain-invert bg-ink text-ink-foreground">
+          <div class="relative z-10 mx-auto flex max-w-[1400px] flex-col items-center justify-center gap-2 px-5 py-2.5 text-center sm:flex-row sm:gap-4 sm:px-8 md:px-10">
+            <p class="text-sm leading-snug">
+              Next cohort opens soon. Join the waitlist for early access.
+            </p>
+            <a href="#pricing" class="label-caps underline underline-offset-4 hover:opacity-80">
+              Get early access →
+            </a>
+          </div>
+        </div>
+        <header class="sticky top-0 z-50 border-b transition-colors duration-500 border-transparent">
+          <div class="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-4 px-5 sm:h-20 sm:px-8 md:px-10">
+            <a href="#top" class="display whitespace-nowrap text-xl tracking-[0.06em] sm:text-2xl" aria-label="Founder — back to top">
+              FOUNDER
+            </a>
+            <nav aria-label="Primary" class="hidden items-center gap-7 lg:flex xl:gap-9">
+              <a href="#problem" data-active="false" class="rule-link label-caps">
+                Problem
+              </a>
+              <a href="#process" data-active="false" class="rule-link label-caps">
+                Process
+              </a>
+              <a href="#pricing" data-active="false" class="rule-link label-caps">
+                Pricing
+              </a>
+              <a href="#results" data-active="false" class="rule-link label-caps">
+                Results
+              </a>
+              <a href="#case-studies" data-active="false" class="rule-link label-caps">
+                Case Studies
+              </a>
+              <a href="#faq" data-active="false" class="rule-link label-caps">
+                FAQ
+              </a>
+              <a href="#pricing" class="inline-flex min-h-11 items-center justify-center bg-primary px-6 text-primary-foreground label-caps transition-opacity duration-300 hover:opacity-85">
+                Explore programs
+              </a>
+            </nav>
+            <button type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Open menu" class="inline-flex size-11 items-center justify-center lg:hidden" onclick="var m=document.getElementById('mobile-menu');m.hidden=!m.hidden;this.setAttribute('aria-expanded',String(!m.hidden))">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-menu size-5" aria-hidden="true">
+                <path d="M4 12h16"></path>
+                <path d="M4 18h16"></path>
+                <path d="M4 6h16"></path>
+              </svg>
+            </button>
+          </div>
+          <div id="mobile-menu" hidden="" class="border-t border-hairline bg-background lg:hidden">
+            <nav aria-label="Mobile" class="mx-auto max-w-[1400px] px-5 py-6">
+              <ul class="flex flex-col">
+                <li class="border-b border-hairline">
+                  <a href="#problem" class="display flex min-h-14 items-center text-3xl" onclick="document.getElementById('mobile-menu').hidden=true">
+                    Problem
+                  </a>
+                </li>
+                <li class="border-b border-hairline">
+                  <a href="#process" class="display flex min-h-14 items-center text-3xl" onclick="document.getElementById('mobile-menu').hidden=true">
+                    Process
+                  </a>
+                </li>
+                <li class="border-b border-hairline">
+                  <a href="#pricing" class="display flex min-h-14 items-center text-3xl" onclick="document.getElementById('mobile-menu').hidden=true">
+                    Pricing
+                  </a>
+                </li>
+                <li class="border-b border-hairline">
+                  <a href="#results" class="display flex min-h-14 items-center text-3xl" onclick="document.getElementById('mobile-menu').hidden=true">
+                    Results
+                  </a>
+                </li>
+                <li class="border-b border-hairline">
+                  <a href="#case-studies" class="display flex min-h-14 items-center text-3xl" onclick="document.getElementById('mobile-menu').hidden=true">
+                    Case Studies
+                  </a>
+                </li>
+                <li class="border-b border-hairline">
+                  <a href="#faq" class="display flex min-h-14 items-center text-3xl" onclick="document.getElementById('mobile-menu').hidden=true">
+                    FAQ
+                  </a>
+                </li>
+              </ul>
+              <a href="#pricing" class="mt-6 inline-flex min-h-12 w-full items-center justify-center bg-primary px-6 text-primary-foreground label-caps" onclick="document.getElementById('mobile-menu').hidden=true">
+                Explore programs
+              </a>
+            </nav>
+          </div>
+        </header>
+        <main class="" id="main">
+          <section id="hero" aria-labelledby="hero-heading" class="grain-animated border-b border-hairline">
+            <div class="grid sm:gap-10 sm:px-8 md:grid-cols-12 md:gap-6 md:px-10 md:pt-20 md:pb-20 lg:gap-8 lg:pt-24 lg:pb-24 max-w-[1400px] mr-auto ml-auto pt-12 pr-5 pb-14 pl-5 gap-x-8 gap-y-8 items-center">
+              <div class="relative z-10 md:col-span-6">
+                <p data-shown="true" class="reveal label-caps text-muted-foreground">
+                  Hi, I'm Subham. I craft
+                </p>
+                <h1 data-shown="true" class="reveal">
+                  <span id="hero-heading" class="display mt-6 block text-balance break-words text-[clamp(2.25rem,4.4vw,4.25rem)] text-foreground">
+                    <span class="block">
+                      Personal-Branded Sales Funnels for
+                    </span>
+                    <span class="block">
+                      <span class="">Experts, Coaches</span>
+                      <span class="block">and Solopreneurs</span>
+                    </span>
+                  </span>
+                </h1>
+                <p data-shown="true" class="reveal mt-8 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
+                  Custom-designed pages that carry your voice from the first
+                  click to conversion and turn trust into sales. Built
+                  step-by-step, from Strategy to Launch.
+                </p>
+                <div data-shown="true" class="reveal mt-10 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                  <a href="/#" target="_blank" rel="noopener noreferrer" class="inline-flex min-h-12 items-center justify-center label-caps transition-all duration-300 hover:-translate-y-0.5 sm:w-auto sm:px-8 text-primary-foreground hover:opacity-85 text-center w-full pr-6 pl-6">
+                    Book a Call
+                  </a>
+                  <a href="https://example.com/program-two" target="_blank" rel="noopener noreferrer" class="inline-flex min-h-12 w-full items-center justify-center px-6 text-center label-caps transition-all duration-300 hover:-translate-y-0.5 sm:w-auto sm:px-8 border border-primary transition-colors hover:bg-primary hover:text-primary-foreground">
+                    See My Work
+                  </a>
+                </div>
+              </div>
+              <div data-shown="true" class="reveal relative z-10 md:col-span-6">
+                <figure class="photo-hover float overflow-hidden bg-muted">
+                  <img alt="Portrait of the founder" width="986" height="1232" fetchpriority="high" class="photo aspect-4/5 w-full object-cover object-top" src="media/f38e3011-dcda-4033-9974-b116f941ec51_1600w.png">
+                </figure>
+              </div>
+            </div>
+          </section>
+          <section id="positioning" aria-labelledby="positioning-heading" class="grain-animated border-b border-hairline">
+            <div class="mx-auto max-w-[1400px] px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:py-32">
+              <div class="relative z-10 grid gap-10 md:grid-cols-12 md:gap-10 lg:gap-14">
+                <div class="md:col-span-5">
+                  <div data-shown="true" class="reveal">
+                    <p class="label-caps text-muted-foreground">Problem</p>
+                    <h2 class="display mt-5 text-[clamp(2.25rem,5vw,4rem)]" id="positioning-heading">
+                      You’ve tried to fix your funnel before.
+                    </h2>
+                    <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
+                      Most soloprenuers try one of three routes. Each one solves
+                      part of the problem and leaves the rest to you, and that
+                      gap is where your visitors stop trusting and leave without
+                      buying.
+                    </p>
+                  </div>
+                </div>
+                <div class="md:col-span-7">
+                  <ul class="grid gap-6">
+                    <li class="">
+                      <div data-shown="true" class="reveal">
+                        <div class="border-t border-hairline pt-6">
+                          <h3 class="display text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                            Building it with A.I.
+                          </h3>
+                          <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                            At its core, A.I. is just an upgraded version of
+                            D.I.Y. template that makes your high-ticket offer
+                            feel ordinary. When the page looks like everyone
+                            else’s, your price starts to look too high.
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="">
+                      <div data-shown="true" class="reveal">
+                        <div class="border-t border-hairline pt-6">
+                          <h3 class="display text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                            Rewriting the Copy
+                          </h3>
+                          <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                            When the words come before the brand work, your page
+                            starts reading like a sales script instead of
+                            sounding like you. And the harder it pushes, the
+                            faster the right people click away.
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="">
+                      <div data-shown="true" class="reveal">
+                        <div class="border-t border-hairline pt-6">
+                          <h3 class="display text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                            Hiring a Designer
+                          </h3>
+                          <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                            Without your brand and your buyer guiding the
+                            design, you pay for whatever looks premium this
+                            year, and your page disappears into a crowd of
+                            polished sites, forgotten the moment your visitor
+                            closes the tab.
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section id="process" aria-labelledby="process-heading" class="grain-animated border-b border-hairline">
+            <div class="mx-auto max-w-[1400px] px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:py-32">
+              <div data-shown="true" class="reveal relative z-10 max-w-3xl">
+                <p class="label-caps text-muted-foreground">Solution</p>
+                <h2 class="display mt-5 text-[clamp(2.25rem,6vw,4.75rem)]" id="process-heading">
+                  This time, your funnel starts with YOU.
+                </h2>
+                <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
+                  Your brand, your words, and your design come from one person,
+                  so nothing gets lost in a handoff.
+                </p>
+              </div>
+              <div class="relative z-10 mt-12 grid gap-10 md:mt-16 lg:mt-20 lg:grid-cols-2 lg:gap-14">
+                <div class="">
+                  <ol class="grid gap-6">
+                    <li class="">
+                      <div data-shown="true" class="reveal">
+                        <div class="pt-6">
+                          <p class="label-caps text-muted-foreground">01</p>
+                          <h3 class="display mt-3 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                            Starting With Your Brand
+                          </h3>
+                          <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                            Before a single word is written or a pixel is
+                            designed, your brand gets mapped: who you are, who
+                            you serve, and why your offer is worth its price.
+                            Your funnel is built on that foundation, so it
+                            carries a presence no template or prompt can copy,
+                            and your price doesn't feel inflated.
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="">
+                      <div data-shown="true" class="reveal">
+                        <div class="border-t border-hairline pt-6">
+                          <p class="label-caps text-muted-foreground">02</p>
+                          <h3 class="display mt-3 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                            Writing in Your Voice
+                          </h3>
+                          <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                            Your copy is written from your own language and your
+                            buyer’s real questions, so the page sounds like the
+                            person your audience already trusts. It guides
+                            people toward a confident yes instead of pushing
+                            them, which is how the right people stay.
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="">
+                      <div data-shown="true" class="reveal">
+                        <div class="border-t border-hairline pt-6">
+                          <p class="label-caps text-muted-foreground">03</p>
+                          <h3 class="display mt-3 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                            Designing for Your Buyer
+                          </h3>
+                          <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                            Every layout, colour, and detail is chosen to make
+                            your offer clear to the person deciding whether to
+                            buy. The result is a page that’s unmistakably yours
+                            and easy to act on, and that visitors remember long
+                            after they’ve left.
+                          </p>
+                        </div>
+                      </div>
+                    </li>
+                    <li class="">
+                      <div data-shown="true" class="reveal"></div>
+                    </li>
+                  </ol>
+                </div>
+                <div class="flex items-center justify-center">
+                  <div data-shown="true" class="reveal">
+                    <figure class="photo-hover float aspect-[4/5] w-full overflow-hidden border border-hairline bg-muted">
+                      <img alt="Founder in a calm, sunlit workspace" width="768" height="960" class="photo h-full w-full object-cover" src="media/374a7c46-d712-46e3-8fca-e330e1582f14_1600w.png">
+                    </figure>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section aria-labelledby="case-studies-heading" class="grain-animated border-b border-hairline" id="case-studies">
+            <div class="mx-auto max-w-[1400px] px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:py-32">
+              <div data-shown="true" class="reveal relative z-10 max-w-3xl line-draw">
+                <p class="label-caps text-muted-foreground">Portfolio</p>
+                <h2 class="display mt-5 text-[clamp(2.25rem,6vw,4.75rem)]" id="case-studies-heading">
+                  What your funnel could look like
+                </h2>
+                <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                  Concept funnels that show how strategy, copy, and design come
+                  together when every page is built around personal brand.
+                </p>
+              </div>
+              <div data-shown="true" class="reveal reveal-stagger z-10 grid gap-6 md:mt-16 lg:mt-20 lg:grid-cols-2 mt-12 relative gap-x-6 gap-y-6">
+                <article class="group lift border border-hairline bg-background">
+                  <figure class="photo-hover overflow-hidden bg-muted">
+                    <img alt="Before and after workspace transformation" width="1400" height="960" class="photo aspect-video w-full object-cover" src="media/result_0.jpg">
+                  </figure>
+                  <div class="p-6 sm:p-8 md:p-10">
+                    <div class="flex items-center gap-3">
+                      <p class="label-caps text-muted-foreground">
+                        Before the system
+                      </p>
+                      <span aria-hidden="true" class="text-muted-foreground">
+                        →
+                      </span>
+                      <p class="label-caps text-foreground">After the system</p>
+                    </div>
+                    <p class="display mt-4 text-[clamp(1.5rem,2.4vw,2rem)]">
+                      10x revenue per client
+                    </p>
+                    <p class="mt-4 leading-relaxed text-muted-foreground">
+                      A member replaced one-off projects with a recurring offer
+                      using the onboarding and sales templates. Within 90 days
+                      they had 12 monthly retainer clients.
+                    </p>
+                  </div>
+                </article>
+                <article class="group lift border border-hairline bg-background">
+                  <figure class="photo-hover overflow-hidden bg-muted">
+                    <img alt="Member celebrating a milestone result" width="1400" height="960" class="photo aspect-video w-full object-cover" src="media/result_1.jpg">
+                  </figure>
+                  <div class="p-6 sm:p-8 md:p-10">
+                    <div class="flex items-center gap-3">
+                      <p class="label-caps text-muted-foreground">
+                        Stuck at a ceiling
+                      </p>
+                      <span aria-hidden="true" class="text-muted-foreground">
+                        →
+                      </span>
+                      <p class="label-caps text-foreground">Broke through</p>
+                    </div>
+                    <p class="display mt-4 text-[clamp(1.5rem,2.4vw,2rem)]">
+                      $40k → $120k/month
+                    </p>
+                    <p class="mt-4 leading-relaxed text-muted-foreground">
+                      By restructuring the offer and adding leverage, a member
+                      tripled monthly revenue while reducing delivery hours by
+                      40%.
+                    </p>
+                  </div>
+                </article>
+              </div>
+              <div data-shown="true" class="reveal reveal-stagger z-10 grid gap-6 md:mt-16 lg:mt-20 lg:grid-cols-2 mt-12 relative gap-x-6 gap-y-6">
+                <article class="group lift border border-hairline bg-background">
+                  <figure class="photo-hover overflow-hidden bg-muted">
+                    <img alt="Before and after workspace transformation" width="1400" height="960" class="photo aspect-video w-full object-cover" src="media/result_0.jpg">
+                  </figure>
+                  <div class="p-6 sm:p-8 md:p-10">
+                    <div class="flex items-center gap-3">
+                      <p class="label-caps text-muted-foreground">
+                        Before the system
+                      </p>
+                      <span aria-hidden="true" class="text-muted-foreground">
+                        →
+                      </span>
+                      <p class="label-caps text-foreground">After the system</p>
+                    </div>
+                    <p class="display mt-4 text-[clamp(1.5rem,2.4vw,2rem)]">
+                      10x revenue per client
+                    </p>
+                    <p class="mt-4 leading-relaxed text-muted-foreground">
+                      A member replaced one-off projects with a recurring offer
+                      using the onboarding and sales templates. Within 90 days
+                      they had 12 monthly retainer clients.
+                    </p>
+                  </div>
+                </article>
+                <article class="group lift border border-hairline bg-background">
+                  <figure class="photo-hover overflow-hidden bg-muted">
+                    <img alt="Member celebrating a milestone result" width="1400" height="960" class="photo aspect-video w-full object-cover" src="media/result_1.jpg">
+                  </figure>
+                  <div class="p-6 sm:p-8 md:p-10">
+                    <div class="flex items-center gap-3">
+                      <p class="label-caps text-muted-foreground">
+                        Stuck at a ceiling
+                      </p>
+                      <span aria-hidden="true" class="text-muted-foreground">
+                        →
+                      </span>
+                      <p class="label-caps text-foreground">Broke through</p>
+                    </div>
+                    <p class="display mt-4 text-[clamp(1.5rem,2.4vw,2rem)]">
+                      $40k → $120k/month
+                    </p>
+                    <p class="mt-4 leading-relaxed text-muted-foreground">
+                      By restructuring the offer and adding leverage, a member
+                      tripled monthly revenue while reducing delivery hours by
+                      40%.
+                    </p>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+          <section id="process-steps" aria-labelledby="process-steps-heading" class="grain-animated border-b border-hairline">
+            <div class="mx-auto max-w-[1400px] px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:py-32">
+              <div data-shown="true" class="reveal relative z-10 max-w-3xl line-draw">
+                <p class="label-caps text-muted-foreground">Process</p>
+                <h2 id="process-steps-heading" class="display mt-5 text-[clamp(2.25rem,6vw,4.75rem)]">
+                  From first call to live funnel, one clear path.
+                </h2>
+                <p class="mt-3 max-w-xl leading-relaxed text-muted-foreground">
+                  Seven steps, each approved by you before the next begins, so
+                  you always know what’s happening and nothing reaches your
+                  visitors without your sign-off.
+                </p>
+              </div>
+              <div data-shown="true" class="reveal relative z-10 mt-12 md:mt-16 lg:mt-20">
+                <div class="flex gap-6 overflow-x-auto pb-8 snap-x snap-mandatory [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden -mx-5 px-5 sm:-mx-8 sm:px-8 md:-mx-10 md:px-10">
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      01
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 01</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Discovery
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        A free 30-minute call to understand your offers, your
+                        audience and what your funnel needs.
+                      </p>
+                    </div>
+                  </article>
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      02
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 02</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Strategy
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        Research into your buyer, market and competitors shapes
+                        what every page must say.
+                      </p>
+                    </div>
+                  </article>
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      03
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 03</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Branding
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        Your voice, colours and type are defined or refined so
+                        every page feels unmistakably yours.
+                      </p>
+                    </div>
+                  </article>
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      04
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 04</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Copy
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        Every word is written in your voice and laid out in a
+                        wireframe for your approval.
+                      </p>
+                    </div>
+                  </article>
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      05
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 05</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Design
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        Each page is designed around your brand, for phone
+                        first, then desktop.
+                      </p>
+                    </div>
+                  </article>
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      06
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 06</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Build
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        Your funnel is custom-coded, connected to your tools and
+                        set up to track results.
+                      </p>
+                    </div>
+                  </article>
+                  <article class="group lift border border-hairline bg-background p-6 sm:p-8 md:p-10 min-w-[320px] sm:min-w-[400px] snap-start flex-shrink-0 flex flex-col relative overflow-hidden">
+                    <span class="absolute -top-4 -right-4 display text-[8rem] leading-none text-muted select-none pointer-events-none">
+                      07
+                    </span>
+                    <div class="relative z-10">
+                      <p class="label-caps text-muted-foreground">Step 07</p>
+                      <h3 class="display mt-6 text-[clamp(1.6rem,2.8vw,2.25rem)]">
+                        Launch
+                      </h3>
+                      <p class="mt-4 leading-relaxed text-muted-foreground">
+                        Your funnel goes live on your own domain, fully yours,
+                        with a walkthrough for simple edits.
+                      </p>
+                    </div>
+                  </article>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section aria-labelledby="about-heading" class="grain-animated border-b border-hairline" id="about">
+            <div class="mx-auto max-w-[1400px] px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:py-32">
+              <div class="relative z-10 grid gap-10 sm:gap-12 md:grid-cols-12 md:gap-10 lg:gap-14">
+                <div data-shown="true" class="reveal md:col-span-5">
+                  <figure class="photo-hover overflow-hidden bg-muted">
+                    <img alt="The founder at work" width="986" height="1232" class="photo aspect-4/5 w-full object-cover object-top" src="media/b3098c78-f57d-4a4e-8537-ec24b93aff51_1600w.png">
+                  </figure>
+                </div>
+                <div class="md:col-span-7">
+                  <div data-shown="true" class="reveal">
+                    <p class="label-caps text-muted-foreground">
+                      About Founder
+                    </p>
+                    <h2 id="about-heading" class="display mt-5 text-[clamp(2rem,5vw,4rem)]">
+                      One person. Every part of your funnel.
+                    </h2>
+                  </div>
+                  <div data-shown="true" class="reveal mt-8 max-w-2xl space-y-5 leading-relaxed text-muted-foreground">
+                    <p class="">
+                      I’m Subham Mundra, a web designer and sales copywriter
+                      based in India. I built my first client website thirteen
+                      years ago and have been building them ever since. Along
+                      the way, I taught myself copywriting, branding, and
+                      coding, because there was rarely anyone else to hand those
+                      parts of the project to.
+                    </p>
+                    <p class="">
+                      I’ve run my business on my own from day one, so I know
+                      what it’s like to be the strategist, the marketer and the
+                      person doing the work, all before lunch. I also spent
+                      years working alongside soloprenuers, founders, and
+                      experts and I kept seeing the same thing: people who were
+                      brilliant at what they did, presenting themselves through
+                      pages that looked and sounded like everyone else’s. That’s
+                      the gap I close. When one person handles your brand, your
+                      words, and your design, nothing gets lost between
+                      handoffs, and you get a funnel that feels like you and
+                      works as hard as you do.
+                    </p>
+                    <p class=""></p>
+                    <p class="">
+                      The problem wasn’t their work; it was that explaining it
+                      on a website feels like selling, and that’s the part they
+                      never signed up for. So I take that part on. I learn how
+                      they work, then build a website that explains each of your
+                      offers clearly, so the right people can find them and know
+                      where to start.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div data-shown="true" class="reveal relative z-10 mt-14 md:mt-20 lg:mt-24"></div>
+            </div>
+          </section>
+          <section id="blog" aria-labelledby="blog-heading" class="grain-animated border-b border-hairline">
+            <div class="mx-auto max-w-[1400px] px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:py-32">
+              <h2 id="blog-heading" class="sr-only">Latest Articles</h2>
+              <div data-shown="true" class="reveal reveal-stagger relative z-10 grid gap-10 md:grid-cols-2 lg:grid-cols-3">
+                <article class="group flex cursor-pointer flex-col">
+                  <figure class="photo-hover aspect-square overflow-hidden bg-muted">
+                    <img alt="Man smiling at desk" width="800" height="800" class="photo h-full w-full object-cover" src="media/photo-1552581234-26160f608093.jpg">
+                  </figure>
+                  <div class="flex flex-grow flex-col pt-6">
+                    <p class="label-caps text-destructive">WEB DESIGN</p>
+                    <h3 class="mt-4 text-xl font-medium leading-snug tracking-tight sm:text-2xl">
+                      Checklist Of Things To Have On Your Website That Signal
+                      Trust And Authority
+                    </h3>
+                    <p class="mt-3 text-base leading-relaxed text-muted-foreground">
+                      Your website if done correctly acts as your 24/7 sales
+                      agent. However, the opposite is also true if done
+                      incorrectly. Read on to learn the difference.
+                    </p>
+                  </div>
+                </article>
+                <article class="group flex cursor-pointer flex-col">
+                  <figure class="photo-hover aspect-square overflow-hidden bg-muted">
+                    <img alt="Workspace with laptop and coffee" width="800" height="800" class="photo h-full w-full object-cover" src="media/photo-1499951360447-b19be8fe80f5.jpg">
+                  </figure>
+                  <div class="flex flex-grow flex-col pt-6">
+                    <p class="label-caps text-destructive">BUSINESS</p>
+                    <h3 class="mt-4 text-xl font-medium leading-snug tracking-tight sm:text-2xl">
+                      Why You Need A Website More Than Ever
+                    </h3>
+                    <p class="mt-3 text-base leading-relaxed text-muted-foreground">
+                      In a post-pandemic age, the business industry has shifted
+                      and having an online presence is more important than ever.
+                    </p>
+                  </div>
+                </article>
+                <article class="group flex cursor-pointer flex-col">
+                  <figure class="photo-hover aspect-square overflow-hidden bg-muted">
+                    <img alt="Checking smartwatch" width="800" height="800" class="photo h-full w-full object-cover" src="media/photo-1434494878577-86c23bcb06b9.jpg">
+                  </figure>
+                  <div class="flex flex-grow flex-col pt-6">
+                    <p class="label-caps text-destructive">PRODUCTIVITY</p>
+                    <h3 class="mt-4 text-xl font-medium leading-snug tracking-tight sm:text-2xl">
+                      The Tools I Use Everyday To Stay On Top Of Things And Keep
+                      Productive
+                    </h3>
+                    <p class="mt-3 text-base leading-relaxed text-muted-foreground">
+                      As a designer who's worked remotely since 2010, one of the
+                      key skills I learned to be important if I wanted to be
+                      productive was self-management.
+                    </p>
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section id="faq" aria-labelledby="faq-heading" class="grain-animated border-b border-hairline">
+            <div class="mx-auto grid max-w-[1400px] gap-10 px-5 py-16 sm:px-8 sm:py-20 md:px-10 md:py-24 lg:grid-cols-12 lg:py-32">
+              <div data-shown="true" class="reveal relative z-10 lg:col-span-4">
+                <p class="label-caps text-muted-foreground">FAQ</p>
+                <h2 id="faq-heading" class="display mt-5 text-[clamp(2.25rem,4.6vw,3.5rem)]">
+                  Questions, answered.
+                </h2>
+              </div>
+              <div data-shown="true" class="reveal relative z-10 lg:col-span-8">
+                <div class="w-full border-t border-hairline" data-orientation="vertical">
+                  <details class="border-b border-hairline">
+                    <summary class="flex flex-1 items-center justify-between font-medium cursor-pointer transition-all [&[data-state=open]>svg]:rotate-180 display py-6 text-left text-[clamp(1.15rem,2vw,1.6rem)] hover:no-underline faq-summary">
+                      Which program should I start with?
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer">
+                      <div class="pt-0 max-w-2xl pb-8 text-base leading-relaxed text-muted-foreground">
+                        Answer the single biggest hesitation first. Point each
+                        reader to the program that solves their most urgent
+                        problem, and note that the other layers on top later.
+                      </div>
+                    </div>
+                  </details>
+                  <details class="border-b border-hairline">
+                    <summary class="flex flex-1 items-center justify-between font-medium cursor-pointer transition-all [&[data-state=open]>svg]:rotate-180 display py-6 text-left text-[clamp(1.15rem,2vw,1.6rem)] hover:no-underline faq-summary">
+                      Is this beginner-friendly?
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer">
+                      <div class="pt-0 max-w-2xl pb-8 text-base leading-relaxed text-muted-foreground">
+                        State the assumed starting point plainly. Both programs
+                        are structured step by step and assume no prior
+                        experience.
+                      </div>
+                    </div>
+                  </details>
+                  <details class="border-b border-hairline">
+                    <summary class="flex flex-1 items-center justify-between font-medium cursor-pointer transition-all [&[data-state=open]>svg]:rotate-180 display py-6 text-left text-[clamp(1.15rem,2vw,1.6rem)] hover:no-underline faq-summary">
+                      How long do I get access?
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer">
+                      <div class="pt-0 max-w-2xl pb-8 text-base leading-relaxed text-muted-foreground">
+                        Be specific about access, updates and renewals. Lifetime
+                        access to the library, call recordings, templates and
+                        every future update.
+                      </div>
+                    </div>
+                  </details>
+                  <details class="border-b border-hairline">
+                    <summary class="flex flex-1 items-center justify-between font-medium cursor-pointer transition-all [&[data-state=open]>svg]:rotate-180 display py-6 text-left text-[clamp(1.15rem,2vw,1.6rem)] hover:no-underline faq-summary">
+                      What kind of support is included?
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer">
+                      <div class="pt-0 max-w-2xl pb-8 text-base leading-relaxed text-muted-foreground">
+                        Describe the human layer: community, live coaching
+                        calls, and how quickly someone gets eyes on their work.
+                      </div>
+                    </div>
+                  </details>
+                  <details class="border-b border-hairline">
+                    <summary class="flex flex-1 items-center justify-between font-medium cursor-pointer transition-all [&[data-state=open]>svg]:rotate-180 display py-6 text-left text-[clamp(1.15rem,2vw,1.6rem)] hover:no-underline faq-summary">
+                      Can I get a refund?
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer">
+                      <div class="pt-0 max-w-2xl pb-8 text-base leading-relaxed text-muted-foreground">
+                        Yes. Every plan includes a 30-day money-back guarantee.
+                        Try the program, attend the calls, and if it's not a
+                        fit, we'll refund your full investment.
+                      </div>
+                    </div>
+                  </details>
+                  <details class="border-b border-hairline">
+                    <summary class="flex flex-1 items-center justify-between font-medium cursor-pointer transition-all [&[data-state=open]>svg]:rotate-180 display py-6 text-left text-[clamp(1.15rem,2vw,1.6rem)] hover:no-underline faq-summary">
+                      What happens after I join?
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevron-down h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </summary>
+                    <div class="faq-answer">
+                      <div class="pt-0 max-w-2xl pb-8 text-base leading-relaxed text-muted-foreground">
+                        You'll receive immediate access to the curriculum,
+                        community, and next live coaching call. Most members
+                        start with the 90-day roadmap and begin seeing clarity
+                        within the first two weeks.
+                      </div>
+                    </div>
+                  </details>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="grain-invert bg-ink text-ink-foreground" aria-labelledby="cta-heading">
+            
+          </section>
+        </main>
+        <footer class="grain border-t border-hairline">
+          <div class="relative z-10 mx-auto max-w-[1400px] px-5 py-14 sm:px-8 md:px-10 md:py-20">
+            <div class="grid gap-10 sm:grid-cols-2 md:grid-cols-12">
+              <div class="sm:col-span-2 md:col-span-6">
+                <p class="display text-2xl tracking-[0.06em]">FOUNDER</p>
+                <p class="mt-4 max-w-sm leading-relaxed text-muted-foreground">
+                  A short, plain-language summary of who you help and what
+                  changes when they work with you.
+                </p>
+                <a href="mailto:hello@founder.com" class="rule-link mt-6 inline-flex min-h-11 items-center text-base">
+                  hello@founder.com
+                </a>
+              </div>
+              <nav aria-label="Programs" class="md:col-span-3">
+                <p class="label-caps text-muted-foreground">Programs</p>
+                <ul class="mt-5 space-y-3">
+                  <li>
+                    <a href="https://example.com/program-one" target="_blank" rel="noopener noreferrer" class="rule-link inline-flex min-h-11 items-center">
+                      Program One
+                    </a>
+                  </li>
+                  <li>
+                    <a href="https://example.com/program-two" target="_blank" rel="noopener noreferrer" class="rule-link inline-flex min-h-11 items-center">
+                      Program Two
+                    </a>
+                  </li>
+                </ul>
+              </nav>
+              <nav aria-label="Sections" class="md:col-span-3">
+                <p class="label-caps text-muted-foreground">Explore</p>
+                <ul class="mt-5 space-y-3">
+                  <li>
+                    <a href="#problem" class="rule-link inline-flex min-h-11 items-center">
+                      Problem
+                    </a>
+                  </li>
+                  <li>
+                    <a href="#process" class="rule-link inline-flex min-h-11 items-center">
+                      Process
+                    </a>
+                  </li>
+                  <li>
+                    <a href="#pricing" class="rule-link inline-flex min-h-11 items-center">
+                      Pricing
+                    </a>
+                  </li>
+                  <li>
+                    <a href="#results" class="rule-link inline-flex min-h-11 items-center">
+                      Results
+                    </a>
+                  </li>
+                  <li>
+                    <a href="#case-studies" class="rule-link inline-flex min-h-11 items-center">
+                      Case Studies
+                    </a>
+                  </li>
+                  <li>
+                    <a href="#faq" class="rule-link inline-flex min-h-11 items-center">
+                      FAQ
+                    </a>
+                  </li>
+                </ul>
+              </nav>
+            </div>
+            <div class="mt-12 flex flex-col gap-4 border-t border-hairline pt-8 text-sm text-muted-foreground md:mt-14 md:flex-row md:items-center md:justify-between">
+              <p>© 2026 Founder. All rights reserved.</p>
+              <p class="max-w-2xl md:text-right">
+                All programs are educational. Individual results vary and
+                nothing here is a guarantee of income or future performance.
+              </p>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </div>
+  
+</body></html>

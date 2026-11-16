@@ -847,7 +847,7 @@ window.open(destination.href, '_blank', 'noopener,noreferrer');
 (function () {
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var clamp = function (v, a, b) { return Math.min(b, Math.max(a, v)); };
-  var R = 'https://marcus-thorne.relumesite.ai/assets/';
+  var R = 'media/';
 
   /* hero name fills the width */
   var hname = document.getElementById('hname'), copy = hname.parentNode;
@@ -879,7 +879,7 @@ window.open(destination.href, '_blank', 'noopener,noreferrer');
   function ease(t) { return 1 - Math.pow(1 - t, 3); }
 
   /* photo wall */
-  var faces = ['11d81c01-acf4-4033-9b7f-b22a1ec20854','31cc4d90-bce2-4372-82c1-87bdaefbb6a6','297700dc-55f0-4648-bd96-32e1c437932f','7ab2e06a-2361-4fa0-bee6-04c0fc2c7bc5','641b2e12-6d9c-452c-9072-b8d5b778a9d1','5a3a37b2-4eae-4830-b455-5f8f754f243c','ea7ea962-6ca4-4092-9631-cf0be69a078d','c56ddf08-272b-46d4-bb16-5084a771a44c','0b61f791-8dfe-439b-8f25-ab9019425660','6da83ca2-f114-4c67-8ca1-6e2043477b0a','35ee6793-f309-4b2e-bbdb-4936039a1423','7b1f782d-3dd9-4ad3-9414-4b9700632645','c05d74e9-f4cb-40f1-95a5-19cd63c81d95','6e2d63f8-b043-4a97-b8de-c2545288ec8d'];
+  var faces = ['11d81c01-acf4-4033-9b7f-b22a1ec20854.jpg','31cc4d90-bce2-4372-82c1-87bdaefbb6a6','297700dc-55f0-4648-bd96-32e1c437932f.jpg','7ab2e06a-2361-4fa0-bee6-04c0fc2c7bc5','641b2e12-6d9c-452c-9072-b8d5b778a9d1.jpg','5a3a37b2-4eae-4830-b455-5f8f754f243c','ea7ea962-6ca4-4092-9631-cf0be69a078d','c56ddf08-272b-46d4-bb16-5084a771a44c','0b61f791-8dfe-439b-8f25-ab9019425660','6da83ca2-f114-4c67-8ca1-6e2043477b0a','35ee6793-f309-4b2e-bbdb-4936039a1423.jpg','7b1f782d-3dd9-4ad3-9414-4b9700632645.jpg','c05d74e9-f4cb-40f1-95a5-19cd63c81d95.jpg','6e2d63f8-b043-4a97-b8de-c2545288ec8d.jpg'];
   var plane = document.getElementById('plane'), rows = [];
   for (var r = 0; r < 5; r++) {
     var row = document.createElement('div'); row.className = 'row'; var h = '';

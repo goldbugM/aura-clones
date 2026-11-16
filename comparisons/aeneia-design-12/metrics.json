@@ -1,0 +1,42 @@
+{
+ "slug": "aeneia-design-12",
+ "overall": 0.9,
+ "structure": 0.909,
+ "copy": 0.878,
+ "design": 0.648,
+ "motion": 0.997,
+ "media": 1.0,
+ "pixel": 0.99,
+ "text_similarity": 0.918,
+ "sections": [
+  7,
+  7
+ ],
+ "headings": [
+  20,
+  20
+ ],
+ "missing_headings": [
+  "aeneia",
+  "studio projektowe, w kt\u00f3rym ka\u017cda przestrze\u0144 zaczyna si\u0119 od cz\u0142owieka , a ko\u0144czy"
+ ],
+ "missing_fonts": [
+  "16 py-25                odbir i stylizacja              li            ul          article        div        div classmx-auto mt-12 flex max-w-1320px flex-wrap items-center justify-between gap-5          p classprice            wycen przygotowujemy indywidualnie dla kadego projektu          p          a classtlink hrefreserve data-cursorzapytaj            zapytaj o wycen          a        div      section      section classrelease idrelease aria-labelledbyrelease-title        div classrelease-pin          div classrelease-track            div classrl-intro              div classsec-headportfoliodiv              h2 classsec-title idrelease-title data-rise01                projekty",
+  "aby                przyjrze mu si bliej              p              p classlabel rl-hint data-rise035                przewi",
+  "aby zobaczy              p            div            article classsake tabindex0 aria-labelmokotw",
+  "apartament style--tint86a593",
+  "ktre                emopowiadajem                histori              h2              p classlede data-rise025                wybr realizacji z naszego portfolio najed na projekt"
+ ],
+ "img_counts": [
+  14,
+  14
+ ],
+ "heights": [
+  15151,
+  15151
+ ],
+ "console_errors": 10,
+ "failed_requests": 5,
+ "shell_render_original": false,
+ "side_by_side": true
+}

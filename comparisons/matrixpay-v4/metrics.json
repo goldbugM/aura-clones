@@ -1,0 +1,41 @@
+{
+ "slug": "matrixpay-v4",
+ "overall": 0.77,
+ "structure": 0.666,
+ "copy": 0.666,
+ "design": 0.7,
+ "motion": 0.998,
+ "media": 1.0,
+ "pixel": null,
+ "text_similarity": 0.888,
+ "sections": [
+  8,
+  8
+ ],
+ "headings": [
+  14,
+  14
+ ],
+ "missing_headings": [
+  "every dollar. every possibility.",
+  "financial intelligence. without limits.",
+  "money moves. intelligence leads.",
+  "one platform. every market.",
+  "security without compromise.",
+  "see beyond the numbers.",
+  "the future is already moving."
+ ],
+ "missing_fonts": [],
+ "img_counts": [
+  0,
+  0
+ ],
+ "heights": [
+  34623,
+  34623
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": false
+}

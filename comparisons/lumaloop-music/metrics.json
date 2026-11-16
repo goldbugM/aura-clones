@@ -1,0 +1,35 @@
+{
+ "slug": "lumaloop-music",
+ "overall": 0.936,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.688,
+ "motion": 0.932,
+ "media": 1.0,
+ "pixel": 0.952,
+ "text_similarity": 1.0,
+ "sections": [
+  9,
+  9
+ ],
+ "headings": [
+  22,
+  22
+ ],
+ "missing_headings": [],
+ "missing_fonts": [
+  "segoe ui"
+ ],
+ "img_counts": [
+  5,
+  5
+ ],
+ "heights": [
+  6802,
+  6802
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

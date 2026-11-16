@@ -1,0 +1,33 @@
+{
+ "slug": "tale-52-17",
+ "overall": 0.857,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.36,
+ "motion": 0.985,
+ "media": 0.94,
+ "pixel": 0.74,
+ "text_similarity": 1.0,
+ "sections": [
+  8,
+  8
+ ],
+ "headings": [
+  7,
+  7
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  9,
+  9
+ ],
+ "heights": [
+  14169,
+  14169
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

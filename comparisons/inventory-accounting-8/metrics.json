@@ -1,0 +1,33 @@
+{
+ "slug": "inventory-accounting-8",
+ "overall": 0.726,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.069,
+ "motion": 0.103,
+ "media": 1.0,
+ "pixel": 1.0,
+ "text_similarity": 1.0,
+ "sections": [
+  0,
+  0
+ ],
+ "headings": [
+  5,
+  5
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  0,
+  0
+ ],
+ "heights": [
+  900,
+  900
+ ],
+ "console_errors": 0,
+ "failed_requests": 1,
+ "shell_render_original": false,
+ "side_by_side": true
+}

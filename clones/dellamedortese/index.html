@@ -1,0 +1,1169 @@
+<html lang="pt-BR"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#03132f">
+<meta name="description" content="Amplie o mix da sua loja com a linha de órteses e recuperação da Dellamed e tenha acesso a condições especiais na primeira compra.">
+<title>Dellamed | Órtese e Recuperação</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&family=Oswald:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+// Hash routers need a real hashchange in this frame. Letting the anchor
+// navigate normally would resolve against the parent URL of srcdoc.
+if (href.startsWith('#/') || href.startsWith('#!/')) {
+window.location.hash = href;
+return;
+}
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+
+  <body class="relative flex min-h-screen flex-col bg-[#03132f] font-['Montserrat',sans-serif] text-white antialiased selection:bg-[#a42529] selection:text-white" style="scroll-behavior: smooth;">
+    <!-- Uma página adaptada, com o visual original e um cadastro acessível. -->
+
+    <div class="pointer-events-none absolute inset-x-0 top-0 z-0 h-[1050px] overflow-hidden" aria-hidden="true">
+      <div class="absolute inset-0 bg-cover bg-center" style="background-image: url("media/18784aca-66f5-4704-b618-ac8fc39ef9aa_1600w.png"); background-size: cover; background-position: center center;"></div>
+      <div class="absolute inset-0" style="background: linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.6)), linear-gradient(rgba(2, 19, 62, 0.25), rgba(2, 19, 62, 0.25));"></div>
+      <div class="absolute inset-0 hidden lg:block" style="background: linear-gradient(to right, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.15) 40%, transparent 65%);" aria-hidden="true"></div>
+    </div>
+
+    <header class="relative z-10 border-b border-white/[0.07]">
+      <div class="mx-auto flex max-w-7xl items-center justify-center px-5 py-6 md:py-7">
+        <a href="#" aria-label="Dellamed — início" class="text-3xl font-semibold tracking-tighter text-white md:text-4xl">
+          <img src="media/46e9f5f0-8830-4625-929d-66ee870dbdd2_320w.png" alt="Dellamed" class="block md:h-10 w-auto h-12 object-contain mr-auto ml-auto">
+        </a>
+      </div>
+    </header>
+
+    <main class="relative z-10 flex-1">
+      <section aria-labelledby="hero-title" class="grid sm:px-8 md:pb-20 md:pt-16 lg:grid-cols-12 lg:gap-14 lg:py-20 max-w-7xl mr-auto ml-auto pt-12 pr-5 pb-14 pl-5 gap-x-12 gap-y-12 items-center">
+        <div class="lg:col-span-7">
+          <div class="mb-6 inline-flex items-center gap-2.5 text-xs font-medium uppercase tracking-[0.16em] text-[#a9c2d4]">
+            <span class="h-1.5 w-1.5 rounded-full bg-[#37c8dc]"></span>
+            Dellamed · Órtese e Recuperação
+          </div>
+
+          <h1 id="hero-title" class="max-w-2xl font-['Oswald',sans-serif] text-4xl font-medium uppercase leading-[1.2] tracking-tight text-white sm:text-5xl lg:text-6xl lg:leading-[1.3]">
+            UMA MARCA QUE GERA
+            <br class="hidden sm:block">
+            <span class="inline bg-[#9A1A1B] px-[0.1em] py-0 shadow-lg shadow-black/10 text-white [box-decoration-break:clone] [-webkit-box-decoration-break:clone] lg:py-[0.02em]">
+              NOVAS OPORTUNIDADES
+            </span>
+            <br class="hidden sm:block">
+            PARA SUA LOJA.
+          </h1>
+
+          <div class="mt-7 inline-flex w-fit items-center gap-3 rounded-full border border-[#37c8dc]/40 bg-[#03132f]/70 p-2 pr-6 backdrop-blur-md" style="box-shadow: 0 0 24px rgba(55,200,220,.12);">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#37c8dc] text-[#03132f]">
+              <iconify-icon icon="solar:gift-linear" width="22" height="22" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+            </div>
+            <span class="text-xs font-medium leading-relaxed sm:text-sm">
+              Bonificação na sua
+              <br>
+              primeira compra
+            </span>
+          </div>
+
+          <p class="mt-7 max-w-lg text-base font-normal leading-relaxed text-[#C7D3E8] md:text-lg">
+            Amplie seu mix com a linha de ortopedia e recuperação da Dellamed e
+            tenha acesso a condições especiais na primeira compra.
+          </p>
+
+          <div class="mt-8 flex items-center gap-2 text-xs text-[#91a6bf]">
+            <iconify-icon icon="solar:shield-check-linear" width="17" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+            Uma parceria para cuidar e crescer.
+          </div>
+        </div>
+
+        <div class="mx-auto w-full max-w-md lg:col-span-5 lg:ml-auto lg:mr-0">
+          <div class="rounded-2xl border border-white/25 bg-white/[0.12] p-6 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-8">
+            <form id="form-revenda" class="flex flex-col gap-4" novalidate="">
+              <input type="hidden" name="utm_source" value="">
+              <input type="hidden" name="utm_medium" value="">
+              <input type="hidden" name="utm_campaign" value="">
+              <input type="hidden" name="utm_content" value="">
+              <input type="hidden" name="utm_term" value="">
+
+              <div class="flex flex-col gap-1.5">
+                <label for="cnpj" class="text-xs font-medium uppercase tracking-wide text-white">
+                  CNPJ
+                </label>
+                <input id="cnpj" name="cnpj" type="text" required="" inputmode="numeric" maxlength="18" autocomplete="off" placeholder="00.000.000/0000-00" aria-describedby="cnpj-error" class="w-full rounded-lg border border-white/20 bg-white/95 px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-[#37c8dc] focus:bg-white focus:ring-2 focus:ring-[#37c8dc]/30">
+                <span id="cnpj-error" class="hidden text-xs leading-relaxed text-rose-200"></span>
+              </div>
+
+              <div class="flex flex-col gap-1.5">
+                <label for="responsavel" class="text-xs font-medium uppercase tracking-wide text-white">
+                  Nome do responsável
+                </label>
+                <input id="responsavel" name="responsavel" type="text" required="" autocomplete="name" placeholder="Seu nome completo" aria-describedby="responsavel-error" class="w-full rounded-lg border border-white/20 bg-white/95 px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-[#37c8dc] focus:bg-white focus:ring-2 focus:ring-[#37c8dc]/30">
+                <span id="responsavel-error" class="hidden text-xs leading-relaxed text-rose-200"></span>
+              </div>
+
+              <div class="flex flex-col gap-1.5">
+                <label id="estado-label" for="estado" class="text-xs font-medium uppercase tracking-wide text-white">
+                  Estado
+                </label>
+                <select id="estado" name="estado" required="" aria-labelledby="estado-label" aria-describedby="estado-error" class="w-full rounded-lg border border-white/20 bg-white/95 px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-[#37c8dc] focus:ring-2 focus:ring-[#37c8dc]/30">
+                  <option value="">Selecione</option>
+                  <option value="AC">Acre</option>
+                  <option value="AL">Alagoas</option>
+                  <option value="AP">Amapá</option>
+                  <option value="AM">Amazonas</option>
+                  <option value="BA">Bahia</option>
+                  <option value="CE">Ceará</option>
+                  <option value="DF">Distrito Federal</option>
+                  <option value="ES">Espírito Santo</option>
+                  <option value="GO">Goiás</option>
+                  <option value="MA">Maranhão</option>
+                  <option value="MT">Mato Grosso</option>
+                  <option value="MS">Mato Grosso do Sul</option>
+                  <option value="MG">Minas Gerais</option>
+                  <option value="PA">Pará</option>
+                  <option value="PB">Paraíba</option>
+                  <option value="PR">Paraná</option>
+                  <option value="PE">Pernambuco</option>
+                  <option value="PI">Piauí</option>
+                  <option value="RJ">Rio de Janeiro</option>
+                  <option value="RN">Rio Grande do Norte</option>
+                  <option value="RS">Rio Grande do Sul</option>
+                  <option value="RO">Rondônia</option>
+                  <option value="RR">Roraima</option>
+                  <option value="SC">Santa Catarina</option>
+                  <option value="SP">São Paulo</option>
+                  <option value="SE">Sergipe</option>
+                  <option value="TO">Tocantins</option>
+                </select>
+                <span id="estado-error" class="hidden text-xs leading-relaxed text-rose-200"></span>
+              </div>
+
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div class="flex flex-col gap-1.5">
+                  <label for="whatsapp" class="text-xs font-medium uppercase tracking-wide text-white">
+                    WhatsApp
+                  </label>
+                  <input id="whatsapp" name="whatsapp" type="tel" required="" autocomplete="tel-national" inputmode="tel" maxlength="15" placeholder="(00) 00000-0000" aria-describedby="whatsapp-error" class="w-full min-w-0 rounded-lg border border-white/20 bg-white/95 px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-[#37c8dc] focus:bg-white focus:ring-2 focus:ring-[#37c8dc]/30">
+                  <span id="whatsapp-error" class="hidden text-xs leading-relaxed text-rose-200"></span>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <label for="email" class="text-xs font-medium uppercase tracking-wide text-white">
+                    E-mail corporativo
+                  </label>
+                  <input id="email" name="email" type="email" required="" autocomplete="email" placeholder="email@suaempresa.com.br" aria-describedby="email-error" class="w-full min-w-0 rounded-lg border border-white/20 bg-white/95 px-3 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-500 focus:border-[#37c8dc] focus:bg-white focus:ring-2 focus:ring-[#37c8dc]/30">
+                  <span id="email-error" class="hidden text-xs leading-relaxed text-rose-200"></span>
+                </div>
+              </div>
+
+              <div class="flex flex-col gap-1.5">
+                <label id="segmento-label" for="segmento-button" class="text-xs font-medium uppercase tracking-wide text-white">
+                  Segmento
+                </label>
+                <div class="relative" data-dropdown="segmento">
+                  <input type="hidden" id="segmento" name="segmento">
+                  <button id="segmento-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="segmento-list" aria-labelledby="segmento-label segmento-value" aria-describedby="segmento-error" class="flex w-full items-center justify-between gap-3 rounded-lg border border-white/20 bg-white/95 px-3 py-3 text-left text-sm text-slate-900 outline-none transition focus:border-[#37c8dc] focus:ring-2 focus:ring-[#37c8dc]/30" aria-required="true">
+                    <span id="segmento-value" class="text-slate-500">
+                      Selecione
+                    </span>
+                    <iconify-icon icon="solar:alt-arrow-down-linear" width="18" class="shrink-0 text-slate-500" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+                  </button>
+                  <div id="segmento-list" role="listbox" aria-labelledby="segmento-label" class="absolute inset-x-0 top-full z-30 mt-2 hidden max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 text-sm text-slate-800 shadow-xl"></div>
+                </div>
+                <span id="segmento-error" class="hidden text-xs leading-relaxed text-rose-200"></span>
+              </div>
+
+              <div aria-hidden="true" style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;">
+                <label for="website">Website</label>
+                <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+              </div>
+
+              <div class="text-xs leading-relaxed text-[#c1cbda]">
+                <label class="flex items-start gap-2">
+                  <input type="checkbox" name="meta_opt_in" class="mt-0.5 h-4 w-4 shrink-0 accent-[#37c8dc]">
+                  <span>Autorizo a Dellamed a compartilhar meu e-mail e telefone em formato protegido por hash e identificadores da visita com a Meta para medir anúncios. A autorização é opcional.</span>
+                </label>
+                <a href="https://www.dellamed.com.br/privacidade" target="_blank" rel="noopener noreferrer" class="mt-2 inline-block underline">Aviso de Privacidade</a>
+              </div>
+
+              <button type="submit" id="submitBtn" class="group mt-2 flex w-full items-center justify-center gap-3 rounded-lg bg-[#a42529] px-3 py-3.5 font-['Oswald',sans-serif] text-lg font-medium uppercase tracking-tight text-white transition hover:bg-[#891b20] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37c8dc] focus-visible:ring-offset-2 focus-visible:ring-offset-[#23344d] disabled:cursor-wait disabled:opacity-70">
+                <span>Quero ser parceiro Dellamed</span>
+                <iconify-icon icon="solar:arrow-right-linear" width="20" class="shrink-0 transition-transform group-hover:translate-x-1" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+              </button>
+
+              <p id="form-status" role="status" aria-live="polite" class="hidden rounded-lg border border-white/15 bg-[#03132f]/40 p-3 text-sm leading-relaxed text-white"></p>
+              <a id="thank-you-link" href="https://farmadellamed.aura.build/obrigado?origem=ortese" target="_top" class="hidden text-center text-sm text-white underline">Ver confirmação do cadastro</a>
+
+              <p class="flex items-center justify-center gap-1.5 text-center text-xs leading-relaxed text-[#c1cbda]">
+                <iconify-icon icon="solar:lock-keyhole-linear" width="14" class="shrink-0" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+                Seus dados estão protegidos (LGPD).
+              </p>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section aria-label="Vantagens de ser parceiro Dellamed" class="relative bg-[#03132f] px-5 pb-16 pt-4 sm:px-8 md:pb-20">
+        <div class="mx-auto grid max-w-5xl gap-5 md:grid-cols-3 lg:gap-8">
+          <article class="relative flex min-h-60 flex-col items-center overflow-hidden rounded-[2rem] border border-[#37c8dc]/30 bg-gradient-to-b from-[#061a37] to-[#0a2342] px-7 py-9 text-center" style="box-shadow: 0 0 24px rgba(55,200,220,.09);">
+            <div class="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-white/5 blur-3xl" aria-hidden="true"></div>
+            <iconify-icon icon="solar:star-fall-linear" width="44" height="44" class="mb-5 text-[#37c8dc]" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+            <p class="max-w-xs text-sm font-normal leading-7 text-[#e2e9f2]">
+              A marca do hospital e da clínica, agora na sua loja.
+            </p>
+            <div class="mt-auto pt-7" aria-hidden="true">
+              <div class="h-0.5 w-10 rounded-full bg-[#37c8dc]" style="box-shadow: 0 0 12px rgba(55,200,220,.45);"></div>
+            </div>
+          </article>
+
+          <article class="relative flex min-h-60 flex-col items-center overflow-hidden rounded-[2rem] border border-[#37c8dc]/30 bg-gradient-to-b from-[#061a37] to-[#0a2342] px-7 py-9 text-center" style="box-shadow: 0 0 24px rgba(55,200,220,.09);">
+            <div class="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-white/5 blur-3xl" aria-hidden="true"></div>
+            <iconify-icon icon="solar:shield-check-linear" width="44" height="44" class="mb-5 text-[#37c8dc]" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+            <p class="max-w-xs text-sm font-normal leading-7 text-[#e2e9f2]">
+              Registrada na ANVISA, com garantia e assistência técnica.
+            </p>
+            <div class="mt-auto pt-7" aria-hidden="true">
+              <div class="h-0.5 w-10 rounded-full bg-[#37c8dc]" style="box-shadow: 0 0 12px rgba(55,200,220,.45);"></div>
+            </div>
+          </article>
+
+          <article class="relative flex min-h-60 flex-col items-center overflow-hidden rounded-[2rem] border border-[#37c8dc]/30 bg-gradient-to-b from-[#061a37] to-[#0a2342] px-7 py-9 text-center" style="box-shadow: 0 0 24px rgba(55,200,220,.09);">
+            <div class="pointer-events-none absolute -right-12 -top-16 h-40 w-40 rounded-full bg-white/5 blur-3xl" aria-hidden="true"></div>
+            <iconify-icon icon="solar:box-linear" width="44" height="44" class="mb-5 text-[#37c8dc]" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+            <p class="max-w-xs text-sm font-normal leading-7 text-[#e2e9f2]">
+              Itens de alto giro que cabem no expositor do seu balcão.
+            </p>
+            <div class="mt-auto pt-7" aria-hidden="true">
+              <div class="h-0.5 w-10 rounded-full bg-[#37c8dc]" style="box-shadow: 0 0 12px rgba(55,200,220,.45);"></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section aria-labelledby="steps-title" class="border-t border-white/5 bg-[#03132f] px-5 py-16 sm:px-8 md:py-20">
+        <div class="mx-auto max-w-2xl">
+          <div class="mb-10 text-center">
+            <p class="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-[#37c8dc]">
+              Simples, do início ao pedido
+            </p>
+            <h2 id="steps-title" class="font-['Oswald',sans-serif] text-3xl font-medium uppercase tracking-tight">
+              Sua próxima parceria começa aqui.
+            </h2>
+          </div>
+
+          <ol class="relative flex flex-col gap-6 md:gap-7">
+            <div class="pointer-events-none absolute bottom-8 left-6 top-8 w-px bg-[#37c8dc]/25" aria-hidden="true"></div>
+            <li class="relative flex items-center gap-4 md:gap-7">
+              <div class="z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#37c8dc] text-[#03132f]" style="box-shadow: 0 0 16px rgba(55,200,220,.2);">
+                <iconify-icon icon="solar:alt-arrow-down-linear" width="23" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+              </div>
+              <div class="flex-1 rounded-2xl border border-[#37c8dc]/30 bg-gradient-to-b from-[#061a37] to-[#0a2342] px-5 py-5 md:px-6" style="box-shadow: 0 0 20px rgba(55,200,220,.07);">
+                <p class="text-sm font-medium leading-relaxed md:text-base">
+                  <span class="sr-only">1.</span>
+                  Preencha seus dados.
+                </p>
+              </div>
+            </li>
+            <li class="relative flex items-center gap-4 md:gap-7">
+              <div class="z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#37c8dc] text-[#03132f]" style="box-shadow: 0 0 16px rgba(55,200,220,.2);">
+                <iconify-icon icon="solar:alt-arrow-down-linear" width="23" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+              </div>
+              <div class="flex-1 rounded-2xl border border-[#37c8dc]/30 bg-gradient-to-b from-[#061a37] to-[#0a2342] px-5 py-5 md:px-6" style="box-shadow: 0 0 20px rgba(55,200,220,.07);">
+                <p class="text-sm font-medium leading-relaxed md:text-base">
+                  <span class="sr-only">2.</span>
+                  Fale com nosso time pelo WhatsApp.
+                </p>
+              </div>
+            </li>
+            <li class="relative flex items-center gap-4 md:gap-7">
+              <div class="z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#37c8dc] text-[#03132f]" style="box-shadow: 0 0 16px rgba(55,200,220,.2);">
+                <iconify-icon icon="solar:check-read-linear" width="23" style="stroke-width: 1.5;" aria-hidden="true"></iconify-icon>
+              </div>
+              <div class="flex-1 rounded-2xl border border-[#37c8dc]/30 bg-gradient-to-b from-[#061a37] to-[#0a2342] px-5 py-5 md:px-6" style="box-shadow: 0 0 20px rgba(55,200,220,.07);">
+                <p class="text-sm font-medium leading-relaxed md:text-base">
+                  <span class="sr-only">3.</span>
+                  Faça seu primeiro pedido e aproveite a bonificação.
+                </p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+    </main>
+
+    <footer class="relative z-10 border-t border-white/5 bg-[#01091f] px-5 py-9">
+      <div class="mx-auto flex max-w-7xl flex-col items-center gap-2 text-center">
+        <a href="#" aria-label="Dellamed — início" class="mb-3 text-2xl font-semibold tracking-tighter text-white/80">
+          <img src="media/46e9f5f0-8830-4625-929d-66ee870dbdd2_320w.png" alt="Dellamed" class="mx-auto block h-8 w-auto object-contain">
+        </a>
+        <p class="text-xs leading-relaxed text-[#91a0b6]">
+          Seus dados estão protegidos (LGPD).
+        </p>
+        <p class="text-xs leading-relaxed text-[#91a0b6]">
+          Produtos registrados na ANVISA.
+        </p>
+      </div>
+    </footer>
+
+    <!-- Pronto para publicar; o envio é confirmado somente após a resposta do serviço. -->
+
+    <script>
+      (() => {
+        'use strict';
+
+        const ENDPOINT = 'https://script.google.com/macros/s/AKfycby1PzGYk0Ki4cpboIWWqw6IvzUX2vsmDKfYlmFWAJsK6miZz6aCmiWNz6ovELJ9yJB3/exec';
+        const FORM_ID = 'ortese-recuperacao';
+        const form = document.getElementById('form-revenda');
+        const submit = document.getElementById('submitBtn');
+        const originalButton = submit.innerHTML;
+        const status = document.getElementById('form-status');
+        const fields = Object.fromEntries(
+          ['cnpj', 'responsavel', 'estado', 'whatsapp', 'email', 'segmento'].map(id => [id, document.getElementById(id)])
+        );
+        let sending = false;
+        let sent = false;
+        let attempt = null;
+
+        function error(id, message = '') {
+          const element = document.getElementById(id + '-error');
+          const control = document.getElementById(id + '-button') || fields[id];
+          element.textContent = message;
+          element.classList.toggle('hidden', !message);
+          if (message) control.setAttribute('aria-invalid', 'true');
+          else control.removeAttribute('aria-invalid');
+        }
+
+        const states = [
+          ['AC', 'Acre'], ['AL', 'Alagoas'], ['AP', 'Amapá'], ['AM', 'Amazonas'],
+          ['BA', 'Bahia'], ['CE', 'Ceará'], ['DF', 'Distrito Federal'],
+          ['ES', 'Espírito Santo'], ['GO', 'Goiás'], ['MA', 'Maranhão'],
+          ['MT', 'Mato Grosso'], ['MS', 'Mato Grosso do Sul'], ['MG', 'Minas Gerais'],
+          ['PA', 'Pará'], ['PB', 'Paraíba'], ['PR', 'Paraná'], ['PE', 'Pernambuco'],
+          ['PI', 'Piauí'], ['RJ', 'Rio de Janeiro'], ['RN', 'Rio Grande do Norte'],
+          ['RS', 'Rio Grande do Sul'], ['RO', 'Rondônia'], ['RR', 'Roraima'],
+          ['SC', 'Santa Catarina'], ['SP', 'São Paulo'], ['SE', 'Sergipe'], ['TO', 'Tocantins']
+        ];
+        const segments = ['Loja de artigos esportivos', 'Loja de corrida', 'Loja de suplementos', 'Academia', 'Box de crossfit', 'Distribuidor'].map(value => [value, value]);
+        const dropdowns = [];
+
+        function makeDropdown(id, options) {
+          const wrapper = document.querySelector('[data-dropdown="' + id + '"]');
+          const button = document.getElementById(id + '-button');
+          const list = document.getElementById(id + '-list');
+          const label = document.getElementById(id + '-value');
+          let active = 0;
+          let search = '';
+          let searchTimer;
+
+          function close(restoreFocus = false) {
+            list.classList.add('hidden');
+            button.setAttribute('aria-expanded', 'false');
+            if (restoreFocus) button.focus();
+          }
+
+          function focusOption(index) {
+            active = (index + options.length) % options.length;
+            list.children[active].focus();
+          }
+
+          function open(last = false) {
+            dropdowns.forEach(dropdown => dropdown.close());
+            list.classList.remove('hidden');
+            button.setAttribute('aria-expanded', 'true');
+            const selected = options.findIndex(option => option[0] === fields[id].value);
+            focusOption(last ? options.length - 1 : Math.max(0, selected));
+          }
+
+          options.forEach(([value, text]) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.tabIndex = -1;
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', 'false');
+            option.className = 'block w-full rounded-md px-3 py-2.5 text-left text-sm outline-none hover:bg-slate-100 focus:bg-cyan-50 focus:text-cyan-900';
+            option.textContent = text;
+            option.addEventListener('click', () => {
+              fields[id].value = value;
+              label.textContent = text;
+              label.classList.remove('text-slate-500');
+              Array.from(list.children).forEach(item => item.setAttribute('aria-selected', String(item === option)));
+              error(id);
+              close(true);
+            });
+            list.appendChild(option);
+          });
+
+          button.addEventListener('click', () => {
+            if (button.getAttribute('aria-expanded') === 'true') close();
+            else open();
+          });
+
+          button.addEventListener('keydown', event => {
+            if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+              event.preventDefault();
+              open(event.key === 'ArrowUp');
+            }
+          });
+
+          list.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              close(true);
+            } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+              event.preventDefault();
+              focusOption(event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : active + (event.key === 'ArrowDown' ? 1 : -1));
+            } else if (event.key === 'Tab') {
+              close();
+              button.focus();
+            } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+              search += event.key.toLocaleLowerCase('pt-BR');
+              clearTimeout(searchTimer);
+              searchTimer = setTimeout(() => { search = ''; }, 600);
+              const match = options.findIndex(option => option[1].toLocaleLowerCase('pt-BR').startsWith(search));
+              if (match >= 0) focusOption(match);
+            }
+          });
+
+          wrapper.addEventListener('focusout', () => {
+            setTimeout(() => {
+              if (!wrapper.contains(document.activeElement)) close();
+            }, 0);
+          });
+          document.addEventListener('click', event => {
+            if (!wrapper.contains(event.target)) close();
+          });
+          dropdowns.push({ close });
+        }
+
+        fields.estado.addEventListener('change', () => error('estado'));
+        makeDropdown('segmento', segments);
+
+        const digits = value => value.replace(/\D/g, '');
+
+        function maskInput(input, formatter) {
+          input.addEventListener('input', () => {
+            const original = input.value;
+            const cursor = input.selectionStart ?? original.length;
+            const count = digits(original.slice(0, cursor)).length;
+            const formatted = formatter(original);
+            if (original !== formatted) {
+              input.value = formatted;
+              let position = 0;
+              let found = 0;
+              while (position < formatted.length && found < count) {
+                if (/\d/.test(formatted[position])) found++;
+                position++;
+              }
+              input.setSelectionRange(position, position);
+            }
+            error(input.id);
+          });
+        }
+
+        maskInput(fields.cnpj, value => {
+          const separators = { 2: '.', 5: '.', 8: '/', 12: '-' };
+          return digits(value).slice(0, 14).split('').map((number, index) => (separators[index] || '') + number).join('');
+        });
+
+        maskInput(fields.whatsapp, value => {
+          const number = digits(value).slice(0, 11);
+          if (!number) return '';
+          if (number.length < 3) return '(' + number;
+          const rest = number.slice(2);
+          const split = number.length > 10 ? 5 : 4;
+          return '(' + number.slice(0, 2) + ') ' + rest.slice(0, split) + (rest.length > split ? '-' + rest.slice(split) : '');
+        });
+
+        ['responsavel', 'email'].forEach(id => fields[id].addEventListener('input', () => error(id)));
+
+        function validCNPJ(value) {
+          const number = digits(value);
+          if (number.length !== 14 || /^(\d)\1{13}$/.test(number)) return false;
+          const check = (base, weights) => {
+            const remainder = base.split('').reduce((sum, digit, i) => sum + Number(digit) * weights[i], 0) % 11;
+            return remainder < 2 ? 0 : 11 - remainder;
+          };
+          const first = check(number.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+          const second = check(number.slice(0, 12) + first, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+          return number === number.slice(0, 12) + first + second;
+        }
+
+        const utmKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+        const bridgeId = 'utm-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+        let attribution = {};
+        let capturePage = '';
+        let captureSource = 'sem_utm';
+        let metaClick = null;
+        let bridgeConfirmed = false;
+        const cleanUTM = value => typeof value === 'string' && !/\{\{[^}]*\}\}/.test(value)
+          ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 254) : '';
+
+        function fillUTMs() {
+          utmKeys.forEach(key => { form.elements[key].value = cleanUTM(attribution[key]); });
+        }
+
+        function parentOrigin() {
+          const runtime = document.querySelector('script[data-session][data-parent-origin]');
+          try {
+            const address = runtime?.getAttribute('data-parent-origin') || document.referrer;
+            if (window.parent === window) return window.location.origin;
+            try { return window.parent.location.origin; } catch (_) {}
+            const url = new URL(address);
+            return url.protocol === 'https:' ? url.origin : '';
+          } catch (_) {
+            return '';
+          }
+        }
+
+        function applyAttribution(address, sessionValues, source, local = false) {
+          let url;
+          try { url = new URL(address); } catch (_) { return; }
+          if (!local && url.origin !== parentOrigin()) return;
+          if (url.protocol !== 'https:') return;
+          capturePage = url.href;
+          const click = url.searchParams.get('fbclid');
+          if (click && /^[A-Za-z0-9_-]{1,512}$/.test(click) && metaClick?.id !== click) {
+            metaClick = {id: click, observed_at: Date.now()};
+          }
+          const tagged = utmKeys.some(key => url.searchParams.has(key));
+          if (tagged || sessionValues) {
+            attribution = Object.fromEntries(utmKeys.map(key => [key, cleanUTM(tagged ? url.searchParams.get(key) : sessionValues[key])]));
+            captureSource = source;
+          }
+          fillUTMs();
+        }
+
+        window.addEventListener('message', event => {
+          if (event.source !== window.parent || event.origin !== parentOrigin()) return;
+          const data = event.data;
+          if (!data || typeof data !== 'object') return;
+          if (data.type === 'dellamed:utm-response' && data.request_id === bridgeId) {
+            bridgeConfirmed = true;
+            applyAttribution(data.url, data.valores || {}, 'ponte');
+          }
+          const runtime = document.querySelector('script[data-session][data-parent-origin]');
+          if (!bridgeConfirmed && runtime && data.channel === 'aura-published-v1' &&
+              data.type === 'configure' && data.session === runtime.getAttribute('data-session') &&
+              runtime.getAttribute('data-parent-origin') === event.origin && data.config) {
+            applyAttribution(data.config.parentUrl, null, 'aura');
+          }
+        });
+
+        applyAttribution(window.location.href, null, 'url', true);
+        try { applyAttribution(window.parent.location.href, null, 'parent'); } catch (_) {}
+        if (window.parent !== window && captureSource === 'sem_utm') {
+          applyAttribution(document.referrer, null, 'referrer');
+        }
+
+        function requestUTMs() {
+          const origin = parentOrigin();
+          if (!bridgeConfirmed && origin && window.parent !== window) {
+            window.parent.postMessage({ type: 'dellamed:utm-request', request_id: bridgeId }, origin);
+          }
+        }
+
+        requestUTMs();
+        [500, 1500, 4000, 10000].forEach(delay => setTimeout(requestUTMs, delay));
+
+        function notifyParent(message) {
+          try {
+            const origin = parentOrigin();
+            if (origin) window.parent.postMessage(message, origin);
+          } catch (_) {}
+        }
+
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          if (sending || sent) return;
+
+          const messages = {
+            cnpj: validCNPJ(fields.cnpj.value) ? '' : 'Informe um CNPJ válido com 14 números.',
+            responsavel: fields.responsavel.value.trim() ? '' : 'Informe o nome do responsável.',
+            estado: states.some(item => item[0] === fields.estado.value) ? '' : 'Selecione seu estado.',
+            whatsapp: /^[1-9]{2}\d{8,9}$/.test(digits(fields.whatsapp.value)) ? '' : 'Informe o WhatsApp com DDD.',
+            email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email.value.trim()) ? '' : 'Informe um e-mail válido.',
+            segmento: segments.some(item => item[0] === fields.segmento.value) ? '' : 'Selecione seu segmento.'
+          };
+
+          Object.entries(messages).forEach(([id, message]) => error(id, message));
+          const invalid = Object.keys(messages).find(id => messages[id]);
+          if (invalid) {
+            (document.getElementById(invalid + '-button') || fields[invalid]).focus();
+            return;
+          }
+
+          fillUTMs();
+          const lead = {
+            cnpj: digits(fields.cnpj.value),
+            responsavel: fields.responsavel.value.trim(),
+            estado: fields.estado.value,
+            whatsapp: fields.whatsapp.value.trim(),
+            email: fields.email.value.trim(),
+            form_id: FORM_ID,
+            segmento_ortese: fields.segmento.value,
+            ...Object.fromEntries(utmKeys.map(key => [key, form.elements[key].value])),
+            captura_utm: captureSource,
+            data_envio: new Date().toISOString(),
+            website: form.elements.website.value
+          };
+          if (form.elements.meta_opt_in.checked) {
+            lead.meta = {opt_in: true, page: capturePage.split(/[?#]/, 1)[0], user_agent: navigator.userAgent, click: metaClick};
+          }
+
+          const signature = JSON.stringify([
+            lead.cnpj, lead.responsavel, lead.estado, lead.whatsapp, lead.email, lead.segmento_ortese
+          ]);
+          if (!attempt || attempt.signature !== signature) {
+            attempt = {
+              signature,
+              id: 'ortese-' + (typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2).padEnd(10, '0'))
+            };
+          }
+          lead.request_id = attempt.id;
+
+          sending = true;
+          submit.disabled = true;
+          form.setAttribute('aria-busy', 'true');
+          submit.textContent = 'Enviando cadastro…';
+          status.classList.remove('hidden');
+          status.textContent = 'Estamos confirmando seu cadastro.';
+
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 35000);
+
+          try {
+            const response = await fetch(ENDPOINT, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+              body: JSON.stringify(lead),
+              signal: controller.signal,
+              redirect: 'follow',
+              credentials: 'omit'
+            });
+            if (!response.ok) throw new Error('Serviço indisponível.');
+            const result = await response.json();
+            if (!result.ok || result.request_id !== attempt.id || result.form_id !== FORM_ID) {
+              throw new Error('Cadastro não confirmado.');
+            }
+
+            sent = true;
+            submit.textContent = 'Cadastro enviado';
+            submit.classList.remove('disabled:cursor-wait');
+            submit.classList.add('disabled:cursor-default');
+            status.textContent = 'Cadastro recebido com sucesso! Nossa equipe entrará em contato pelo WhatsApp informado.';
+            document.getElementById('thank-you-link').classList.remove('hidden');
+            notifyParent({
+              type: 'dellamed:lead-confirmed',
+              form_id: FORM_ID,
+              event_id: attempt.id
+            });
+          } catch (_) {
+            status.textContent = 'Não foi possível confirmar o cadastro. Seus dados continuam preenchidos; tente novamente.';
+            submit.disabled = false;
+            submit.innerHTML = originalButton;
+          } finally {
+            clearTimeout(timeout);
+            sending = false;
+            form.removeAttribute('aria-busy');
+          }
+        });
+      })();
+    </script>
+  
+
+</body></html>

@@ -1,0 +1,33 @@
+{
+ "slug": "matrixpay-v4-react",
+ "overall": 0.935,
+ "structure": 1.0,
+ "copy": 0.999,
+ "design": 0.68,
+ "motion": 0.991,
+ "media": 1.0,
+ "pixel": 0.898,
+ "text_similarity": 0.998,
+ "sections": [
+  8,
+  8
+ ],
+ "headings": [
+  14,
+  14
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  0,
+  0
+ ],
+ "heights": [
+  34623,
+  3986
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

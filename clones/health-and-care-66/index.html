@@ -1,0 +1,1066 @@
+<html lang="en" class="scroll-smooth"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sovereign Care - Residential & Nursing Homes</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body {
+font-family: 'Inter', sans-serif;
+-webkit-font-smoothing: antialiased;
+}
+</style>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+// Hash routers need a real hashchange in this frame. Letting the anchor
+// navigate normally would resolve against the parent URL of srcdoc.
+if (href.startsWith('#/') || href.startsWith('#!/')) {
+window.location.hash = href;
+return;
+}
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+  <body class="bg-white text-slate-800">
+    <!-- Header -->
+    <header class="border-b border-slate-200 fixed w-full top-0 left-0 bg-white/80 backdrop-blur-md z-50">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+        <div class="flex items-center">
+          <a href="#" class="bg-white px-2 rounded-md flex items-center justify-center h-[70px]">
+            <img src="media/bc34c1f1-aa8e-46c0-b571-7095e4791b86_800w.png" alt="Sovereign Care Ltd. Logo" class="h-full w-auto object-contain">
+          </a>
+        </div>
+
+        <nav class="hidden md:flex space-x-8">
+          <a href="#" class="text-slate-600 hover:text-slate-900 font-medium text-lg transition-colors">
+            Home
+          </a>
+          <div class="relative group flex items-center">
+            <a href="#our-homes" class="text-slate-600 group-hover:text-slate-900 font-medium text-lg transition-colors flex items-center gap-1">
+              Our Homes
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 mt-0.5">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </a>
+            <div class="absolute left-0 top-full pt-4 w-52 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+              <div class="bg-white border border-slate-200 rounded-xl shadow-lg py-2 flex flex-col" id="homes-submenu">
+                <a href="#" class="block px-4 py-2 text-base font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                  Filsham Lodge
+                </a>
+                <a href="#" class="block px-4 py-2 text-base font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                  Caroline House
+                </a>
+                <a href="#" class="block px-4 py-2 text-base font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors">
+                  Ampersand House
+                </a>
+              </div>
+            </div>
+          </div>
+          <a href="#" class="text-slate-600 hover:text-slate-900 font-medium text-lg transition-colors" id="careers-link">
+            Careers
+          </a>
+          <a href="#contact" class="text-slate-600 hover:text-slate-900 font-medium text-lg transition-colors">
+            Contact
+          </a>
+        </nav>
+
+        <div class="flex items-center gap-3">
+          <a href="#map" class="text-white px-6 py-3 rounded-full font-medium text-lg transition-colors hidden md:inline-block bg-[#2e5495] hover:bg-[#25457a]">
+            Find your nearest home
+          </a>
+          <button id="mobile-menu-btn" class="md:hidden text-slate-600 hover:text-slate-900 p-2 flex items-center justify-center">
+            <svg id="menu-icon-open" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="4" x2="20" y1="12" y2="12"></line>
+              <line x1="4" x2="20" y1="6" y2="6"></line>
+              <line x1="4" x2="20" y1="18" y2="18"></line></svg><svg id="menu-icon-close" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden">
+              <path d="M18 6 6 18"></path>
+              <path d="m6 6 12 12"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-slate-200 absolute top-full left-0 w-full shadow-lg z-50 max-h-[calc(100vh-5rem)] overflow-y-auto">
+        <div class="px-4 py-6 space-y-4 flex flex-col">
+          <a href="#" class="text-slate-800 font-medium text-xl mobile-link">
+            Home
+          </a>
+          <div class="flex flex-col space-y-3 pt-2">
+            <span class="text-slate-800 font-medium text-xl">Our Homes</span>
+            <div class="pl-4 flex flex-col space-y-3 border-l-2 border-slate-100 ml-2">
+              <a href="#" class="text-slate-600 hover:text-slate-900 font-medium text-lg mobile-link view-home-btn">
+                Filsham Lodge
+              </a>
+              <a href="#" class="text-slate-600 hover:text-slate-900 font-medium text-lg mobile-link view-home-btn">
+                Caroline House
+              </a>
+              <a href="#" class="text-slate-600 hover:text-slate-900 font-medium text-lg mobile-link view-home-btn">
+                Ampersand House
+              </a>
+            </div>
+          </div>
+          <a href="#" class="text-slate-800 font-medium text-xl mobile-link pt-2" id="careers-link-mobile">
+            Careers
+          </a>
+          <a href="#contact" class="text-slate-800 font-medium text-xl mobile-link pt-2">
+            Contact
+          </a>
+          <a href="#map" class="mt-4 text-white px-6 py-3 rounded-full font-medium text-lg text-center bg-[#2e5495] hover:bg-[#25457a] mobile-link inline-block">
+            Find your nearest home
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <!-- Hero Placeholder -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-28">
+      <img src="media/f79ba915-2cab-4998-8691-c8fb94097b35_1600w.jpg" alt="Caregiver and Senior Woman with Therapy Dog" class="w-full aspect-[21/9] object-cover rounded-2xl">
+    </div>
+
+    <!-- Welcome Section -->
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <div class="max-w-3xl mb-12">
+        <h1 class="text-4xl md:text-5xl font-semibold text-blue-900 tracking-tight mb-4">
+          Welcome to Sovereign Care
+        </h1>
+        <p class="text-xl md:text-2xl text-slate-600 italic tracking-tight mb-8">
+          A family-run provider of residential, nursing and dementia care across
+          Kent and East Sussex.
+        </p>
+        <div class="flex flex-wrap gap-4">
+          <a href="#map" class="text-white px-8 py-3 rounded-full font-medium text-lg transition-colors bg-[#2e5495] hover:bg-[#25457a]">
+            Find a home
+          </a>
+          <a href="#contact" class="border border-slate-300 hover:border-slate-400 text-slate-700 px-8 py-3 rounded-full font-medium text-lg transition-colors">
+            Get in touch
+          </a>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-12 gap-12 lg:gap-20 items-center">
+        <div class="space-y-6 text-lg text-slate-600 leading-relaxed md:col-span-5 lg:col-span-5">
+          <p>
+            Welcome to Sovereign Care, a family-run business that has been
+            caring for older people since March 2003. For more than twenty years
+            we have treated each person as part of the family — with warmth,
+            dignity and genuine, person-centred care.
+          </p>
+          <p>
+            What began as a single home has grown into a close-knit group of
+            three care homes across Kent and East Sussex, yet our founding
+            belief has never changed: that everyone deserves to feel safe,
+            valued and truly at home in later life.
+          </p>
+        </div>
+        <img src="media/a44c6c7d-27da-4443-a3d1-9bc2be2a8ab7_1600w.jpg" alt="Elderly Couple Seated in Colorful Armchairs" class="w-full h-auto rounded-2xl md:col-span-7 lg:col-span-7">
+      </div>
+    </section>
+
+    <!-- Our Homes Section -->
+    <section class="border-t border-slate-100" id="our-homes">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <h2 class="text-3xl md:text-4xl font-semibold text-blue-900 tracking-tight mb-12">
+          Our homes
+        </h2>
+
+        <div class="grid md:grid-cols-3 gap-8">
+          <!-- Card 1 -->
+          <div class="border border-slate-200 rounded-2xl p-6 flex flex-col hover:shadow-sm transition-shadow">
+            <img src="media/431ccd3c-9f7f-40da-bca5-fa194a3dd43a_800w.jpg" alt="Ampersand House — Rochester" class="w-full aspect-video object-cover rounded-xl mb-6">
+            <h3 class="text-2xl font-semibold text-blue-900 tracking-tight mb-3">
+              Ampersand House — Rochester
+            </h3>
+            <p class="text-lg text-slate-600 mb-8 flex-grow">
+              A warm, characterful nursing home offering nursing, residential
+              and dementia care, with kind and holistic dementia care at its
+              heart.
+            </p>
+            <a href="#" class="text-white px-6 py-2.5 rounded-full font-medium text-lg self-start transition-colors bg-[#2e5495] hover:bg-[#25457a] view-home-btn">
+              View home
+            </a>
+          </div>
+
+          <!-- Card 2 -->
+          <div class="border border-slate-200 rounded-2xl p-6 flex flex-col hover:shadow-sm transition-shadow">
+            <img src="media/2fc6b644-9016-4414-a8be-5b24e0b0609b_800w.jpg" alt="Caroline House Residential Care Home" class="w-full aspect-video object-cover rounded-xl mb-6">
+            <h3 class="text-2xl font-semibold text-blue-900 tracking-tight mb-3">
+              Caroline House — Hailsham
+            </h3>
+            <p class="text-lg text-slate-600 mb-8 flex-grow">
+              A welcoming home with 26 bedrooms, caring for up to 28 residents,
+              offering residential and dementia care in a genuine family
+              atmosphere.
+            </p>
+            <a href="#" class="text-white px-6 py-2.5 rounded-full font-medium text-lg self-start transition-colors bg-[#2e5495] hover:bg-[#25457a] view-home-btn">
+              View home
+            </a>
+          </div>
+
+          <!-- Card 3 -->
+          <div class="border border-slate-200 rounded-2xl p-6 flex flex-col hover:shadow-sm transition-shadow">
+            <img src="media/2079a274-b83b-468c-9066-69fe2020595f_800w.jpg" alt="Filsham Lodge — Hailsham" class="w-full aspect-video object-cover rounded-xl mb-6">
+            <h3 class="text-2xl font-semibold text-blue-900 tracking-tight mb-3">
+              Filsham Lodge — Hailsham
+            </h3>
+            <p class="text-lg text-slate-600 mb-8 flex-grow">
+              A 56-bed nursing home providing nursing, residential, dementia,
+              palliative and respite care with compassion, dignity and respect.
+            </p>
+            <a href="#" class="text-white px-6 py-2.5 rounded-full font-medium text-lg self-start transition-colors bg-[#2e5495] hover:bg-[#25457a] view-home-btn">
+              View home
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Our Story Section -->
+    <section class="border-t border-slate-100">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <div class="grid md:grid-cols-2 gap-12 lg:gap-20 items-start">
+          <div>
+            <h2 class="text-3xl md:text-4xl font-semibold text-blue-900 tracking-tight mb-6">
+              Our story
+            </h2>
+            <p class="text-lg text-slate-600 leading-relaxed mb-12">
+              Since first opening our doors in March 2003, Sovereign Care has
+              remained proudly family-run and independent. That independence
+              lets us put people before process, invest in our teams, and shape
+              care around each resident.
+            </p>
+
+            <div class="bg-slate-50 border-l-4 border-blue-200 rounded-r-2xl p-8">
+              <p class="text-xl text-slate-700 italic leading-relaxed mb-4">
+                "Our vision has always been simple: to run the kind of homes we
+                would be proud for our own family to live in — care that begins
+                with the person, delivered by a team who treat every resident
+                with the utmost warmth and respect."
+              </p>
+              <p class="text-lg font-semibold text-blue-900">
+                — Radha Ravichandran, Director, Sovereign Care
+              </p>
+            </div>
+          </div>
+
+          <img src="media/2809c057-a434-4bb2-85f1-3070567fb4d6_800w.jpg" alt="Caregiver and Senior Sharing a Book" class="w-full aspect-[4/3] object-cover rounded-2xl mt-2 md:mt-0">
+        </div>
+      </div>
+    </section>
+
+    <!-- Our Values Section -->
+    <section class="border-t border-slate-100">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <h2 class="text-3xl md:text-4xl font-semibold text-blue-900 tracking-tight mb-16 text-center">
+          Our values
+        </h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 text-center">
+          <!-- Value 1 -->
+          <div class="flex flex-col items-center">
+            <div class="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center text-blue-800 mb-6">
+              <i data-lucide="heart" stroke-width="1.5" class="w-8 h-8"></i>
+            </div>
+            <h3 class="text-2xl font-semibold text-slate-900 tracking-tight mb-3">
+              Compassion
+            </h3>
+            <p class="text-lg text-slate-600">
+              We care with warmth and kindness, treating every resident as
+              family.
+            </p>
+          </div>
+
+          <!-- Value 2 -->
+          <div class="flex flex-col items-center">
+            <div class="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center text-blue-800 mb-6">
+              <i data-lucide="users" stroke-width="1.5" class="w-8 h-8"></i>
+            </div>
+            <h3 class="text-2xl font-semibold text-slate-900 tracking-tight mb-3">
+              Respect
+            </h3>
+            <p class="text-lg text-slate-600">
+              We value each person as an individual and protect their privacy
+              and choice.
+            </p>
+          </div>
+
+          <!-- Value 3 -->
+          <div class="flex flex-col items-center">
+            <div class="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center text-blue-800 mb-6">
+              <i data-lucide="shield-check" stroke-width="1.5" class="w-8 h-8"></i>
+            </div>
+            <h3 class="text-2xl font-semibold text-slate-900 tracking-tight mb-3">
+              Integrity
+            </h3>
+            <p class="text-lg text-slate-600">
+              We are honest and open with residents, families and professionals.
+            </p>
+          </div>
+
+          <!-- Value 4 -->
+          <div class="flex flex-col items-center">
+            <div class="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center text-blue-800 mb-6">
+              <i data-lucide="star" stroke-width="1.5" class="w-8 h-8"></i>
+            </div>
+            <h3 class="text-2xl font-semibold text-slate-900 tracking-tight mb-3">
+              Excellence
+            </h3>
+            <p class="text-lg text-slate-600">
+              We keep improving, so care is safe and of a high standard every
+              day.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Get in touch & Map -->
+    <section class="border-t border-slate-100 pb-20" id="contact">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+        <h2 class="text-3xl md:text-4xl font-semibold text-blue-900 tracking-tight mb-4">
+          Get in touch
+        </h2>
+        <p class="text-xl text-blue-800 font-medium tracking-tight mb-12">
+          Our lines are open Monday to Friday, 9am to 5pm — all three homes are
+          staffed 24 hours a day.
+        </p>
+
+        <div class="grid md:grid-cols-3 gap-6 mb-12">
+          <!-- Contact Card 1 -->
+          <div class="border border-slate-200 rounded-xl p-6 bg-white">
+            <h3 class="text-xl font-semibold text-slate-900 tracking-tight mb-4">
+              Ampersand House
+            </h3>
+            <div class="space-y-1 text-lg text-slate-600">
+              <p>Parsonage Lane, Frindsbury, Rochester, Kent ME2 4HP</p>
+
+              <p class="pt-2">
+                Tel:
+                <a href="#" class="text-blue-700 hover:underline">
+                  01634 561014
+                </a>
+              </p>
+              <p class="break-all">ampersand.manager@sovereigncarehome.co.uk</p>
+            </div>
+          </div>
+
+          <!-- Contact Card 2 -->
+          <div class="border border-slate-200 rounded-xl p-6 bg-white">
+            <h3 class="text-xl font-semibold text-slate-900 tracking-tight mb-4">
+              Caroline House
+            </h3>
+            <div class="space-y-1 text-lg text-slate-600">
+              <p>7-9 Ersham Road, Hailsham, East</p>
+              <p>Sussex BN27 3LG</p>
+              <p class="pt-2">
+                Tel:
+                <a href="#" class="text-blue-700 hover:underline">
+                  01323 841073
+                </a>
+              </p>
+              <p class="break-all">caroline.wright@sovereigncarehome.co.uk</p>
+            </div>
+          </div>
+
+          <!-- Contact Card 3 -->
+          <div class="border border-slate-200 rounded-xl p-6 bg-white">
+            <h3 class="text-xl font-semibold text-slate-900 tracking-tight mb-4">
+              Filsham Lodge
+            </h3>
+            <div class="space-y-1 text-lg text-slate-600">
+              <p>137-141 South Road, Hailsham, East</p>
+              <p>Sussex BN27 3NN</p>
+              <p class="pt-2">
+                Tel:
+                <a href="#" class="text-blue-700 hover:underline">
+                  01323 844008
+                </a>
+              </p>
+              <p class="break-all">simi.santhosh@sovereigncarehome.co.uk</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Map Placeholder -->
+        <img src="media/c9a0e376-4db1-4d3e-b248-49d70605dc21_1600w.jpg" alt="Map of Southern England and the English Channel" class="w-full rounded-2xl aspect-[21/9] md:aspect-[3/1] object-cover" id="map">
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-[#1f2937] text-slate-300 py-12 rounded-t-3xl max-w-[98%] mx-auto mb-4">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-3 text-base">
+        <p>
+          <span class="font-medium text-white">Sovereign Care Limited</span>
+          · Registered in England & Wales, company no. 07160239 · Registered
+          office: 31-33 Commercial Road, Poole, BH14 0HU ·
+        </p>
+        <p>Registered with the Care Quality Commission</p>
+        <div class="pt-4 flex flex-wrap justify-center gap-4 text-slate-400">
+          <a href="#" class="hover:text-white transition-colors">
+            Ampersand House, Rochester
+          </a>
+          <span class="hidden sm:inline">|</span>
+          <a href="#" class="hover:text-white transition-colors">
+            Caroline House, Hailsham
+          </a>
+          <span class="hidden sm:inline">|</span>
+          <a href="#" class="hover:text-white transition-colors">
+            Filsham Lodge, Hailsham
+          </a>
+          <span class="hidden sm:inline">·</span>
+          <a href="#" class="hover:text-white transition-colors">
+            www.sovereigncarehome.co.uk
+          </a>
+        </div>
+      </div>
+    </footer>
+
+    <div id="home-profile-modal" class="fixed inset-0 z-[100] hidden items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 text-center relative">
+        <button id="close-modal" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors">
+          <i data-lucide="x" stroke-width="2" class="w-6 h-6"></i>
+        </button>
+        <h2 class="text-2xl font-semibold text-blue-900 tracking-tight mt-2">
+          this CTA shall take you to the dedicated home profile page
+        </h2>
+      </div>
+    </div>
+    <div id="careers-modal" class="fixed inset-0 z-[100] hidden items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 text-center relative">
+        <button id="close-careers-modal" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 transition-colors">
+          <i data-lucide="x" stroke-width="2" class="w-6 h-6"></i>
+        </button>
+        <h2 class="text-2xl font-semibold text-blue-900 tracking-tight mt-2">
+          this CTA shall take you to the dedicated Careers page
+        </h2>
+      </div>
+    </div>
+    <button id="scrollToTopBtn" class="fixed right-8 bg-[#2e5495] hover:bg-[#25457a] text-white p-3 rounded-full shadow-lg opacity-0 pointer-events-none translate-y-4 transition-all duration-300 z-50 flex items-center justify-center bottom-20" aria-label="Scroll to top">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+        <path d="m5 12 7-7 7 7"></path>
+        <path d="M12 19V5"></path>
+      </svg>
+    </button>
+    <script>
+      (function() {
+        const btn = document.getElementById('scrollToTopBtn');
+        if (btn) {
+          window.addEventListener('scroll', () => {
+            if (window.scrollY > 100) {
+              btn.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-4');
+              btn.classList.add('opacity-100', 'translate-y-0');
+            } else {
+              btn.classList.add('opacity-0', 'pointer-events-none', 'translate-y-4');
+              btn.classList.remove('opacity-100', 'translate-y-0');
+            }
+          });
+          btn.addEventListener('click', () => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          });
+        }
+      })();
+    </script>
+    <script>
+      lucide.createIcons();
+      (function() {
+        const modal = document.getElementById('home-profile-modal');
+        const closeBtn = document.getElementById('close-modal');
+        const links = document.querySelectorAll('#homes-submenu a, .view-home-btn');
+        if(modal && closeBtn) {
+          links.forEach(link => {
+            link.addEventListener('click', (e) => {
+              e.preventDefault();
+              modal.classList.remove('hidden');
+              modal.classList.add('flex');
+            });
+          });
+          closeBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+          });
+          modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+              modal.classList.add('hidden');
+              modal.classList.remove('flex');
+            }
+          });
+        }
+
+        const careersModal = document.getElementById('careers-modal');
+        const closeCareersBtn = document.getElementById('close-careers-modal');
+        const careersLink = document.getElementById('careers-link');
+        if(careersModal && closeCareersBtn && careersLink) {
+          careersLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            careersModal.classList.remove('hidden');
+            careersModal.classList.add('flex');
+          });
+          closeCareersBtn.addEventListener('click', () => {
+            careersModal.classList.add('hidden');
+            careersModal.classList.remove('flex');
+          });
+          careersModal.addEventListener('click', (e) => {
+            if (e.target === careersModal) {
+              careersModal.classList.add('hidden');
+              careersModal.classList.remove('flex');
+            }
+          });
+        }
+      })();
+    </script>
+
+    <script>
+      (function() {
+        const initMobileMenu = () => {
+          const btn = document.getElementById('mobile-menu-btn');
+          const menu = document.getElementById('mobile-menu');
+          const iconOpen = document.getElementById('menu-icon-open');
+          const iconClose = document.getElementById('menu-icon-close');
+          const links = document.querySelectorAll('.mobile-link');
+
+          if(btn && menu) {
+            btn.addEventListener('click', () => {
+              menu.classList.toggle('hidden');
+              iconOpen.classList.toggle('hidden');
+              iconClose.classList.toggle('hidden');
+            });
+            links.forEach(link => {
+              link.addEventListener('click', () => {
+                menu.classList.add('hidden');
+                iconOpen.classList.remove('hidden');
+                iconClose.classList.add('hidden');
+              });
+            });
+          }
+
+          const careersModal = document.getElementById('careers-modal');
+          const careersLinkMobile = document.getElementById('careers-link-mobile');
+          if(careersModal && careersLinkMobile) {
+            careersLinkMobile.addEventListener('click', (e) => {
+              e.preventDefault();
+              careersModal.classList.remove('hidden');
+              careersModal.classList.add('flex');
+            });
+          }
+        };
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', initMobileMenu);
+        } else {
+          initMobileMenu();
+        }
+      })();
+    </script>
+
+    <button id="scrollToTopBtn" onclick="window.scrollTo({top:0, behavior:'smooth'})" class="fixed right-8 z-[90] p-3 bg-[#2e5495] text-white rounded-full shadow-lg opacity-0 pointer-events-none transition-opacity duration-300 hover:bg-[#25457a] bottom-20" aria-label="Scroll to top">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-6 h-6">
+        <path d="m5 12 7-7 7 7"></path>
+        <path d="M12 19V5"></path>
+      </svg>
+    </button>
+    <script>
+      window.addEventListener('scroll', function() {
+        var btn = document.getElementById('scrollToTopBtn');
+        if (btn) {
+          if (window.scrollY > 100) {
+            btn.classList.remove('opacity-0', 'pointer-events-none');
+          } else {
+            btn.classList.add('opacity-0', 'pointer-events-none');
+          }
+        }
+      });
+    </script>
+  
+</body></html>

@@ -1,0 +1,33 @@
+{
+ "slug": "petrekdesign2",
+ "overall": 0.901,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.416,
+ "motion": 0.924,
+ "media": 1.0,
+ "pixel": 1.0,
+ "text_similarity": 1.0,
+ "sections": [
+  9,
+  9
+ ],
+ "headings": [
+  9,
+  9
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  7,
+  7
+ ],
+ "heights": [
+  6563,
+  6563
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

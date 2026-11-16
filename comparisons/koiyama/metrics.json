@@ -1,0 +1,36 @@
+{
+ "slug": "koiyama",
+ "overall": 0.869,
+ "structure": 0.883,
+ "copy": 0.84,
+ "design": 0.536,
+ "motion": 0.997,
+ "media": 1.0,
+ "pixel": 0.991,
+ "text_similarity": 0.89,
+ "sections": [
+  6,
+  6
+ ],
+ "headings": [
+  15,
+  15
+ ],
+ "missing_headings": [
+  "a small brewhouse above a spring-fed pond, where the water reaches the koi befor",
+  "koiyama"
+ ],
+ "missing_fonts": [],
+ "img_counts": [
+  14,
+  14
+ ],
+ "heights": [
+  14091,
+  14091
+ ],
+ "console_errors": 10,
+ "failed_requests": 5,
+ "shell_render_original": false,
+ "side_by_side": true
+}

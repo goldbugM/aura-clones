@@ -1,0 +1,33 @@
+{
+ "slug": "lintel-3d",
+ "overall": 0.93,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.536,
+ "motion": 0.999,
+ "media": 1.0,
+ "pixel": 1.0,
+ "text_similarity": 1.0,
+ "sections": [
+  5,
+  5
+ ],
+ "headings": [
+  8,
+  8
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  8,
+  8
+ ],
+ "heights": [
+  13500,
+  13500
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

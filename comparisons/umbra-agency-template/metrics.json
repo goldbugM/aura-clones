@@ -1,0 +1,35 @@
+{
+ "slug": "umbra-agency-template",
+ "overall": 0.914,
+ "structure": 0.99,
+ "copy": 0.765,
+ "design": 0.774,
+ "motion": 0.992,
+ "media": 1.0,
+ "pixel": null,
+ "text_similarity": 0.622,
+ "sections": [
+  14,
+  14
+ ],
+ "headings": [
+  50,
+  49
+ ],
+ "missing_headings": [
+  "we build the thing, not the deck."
+ ],
+ "missing_fonts": [],
+ "img_counts": [
+  3,
+  3
+ ],
+ "heights": [
+  138802,
+  138802
+ ],
+ "console_errors": 3,
+ "failed_requests": 2,
+ "shell_render_original": false,
+ "side_by_side": false
+}

@@ -1,0 +1,33 @@
+{
+ "slug": "pocket-quest",
+ "overall": 0.126,
+ "structure": 0.084,
+ "copy": 0.13,
+ "design": 0.037,
+ "motion": 0.197,
+ "media": 0.317,
+ "pixel": 0.097,
+ "text_similarity": 0.106,
+ "sections": [
+  0,
+  9
+ ],
+ "headings": [
+  3,
+  19
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  1,
+  41
+ ],
+ "heights": [
+  10225,
+  10222
+ ],
+ "console_errors": 14,
+ "failed_requests": 8,
+ "shell_render_original": false,
+ "side_by_side": true
+}

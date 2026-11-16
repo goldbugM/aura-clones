@@ -1,0 +1,33 @@
+{
+ "slug": "personal-brand-61",
+ "overall": 0.923,
+ "structure": 1.0,
+ "copy": 0.928,
+ "design": 0.786,
+ "motion": 0.976,
+ "media": 1.0,
+ "pixel": 0.8,
+ "text_similarity": 0.88,
+ "sections": [
+  9,
+  9
+ ],
+ "headings": [
+  24,
+  24
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  10,
+  10
+ ],
+ "heights": [
+  9267,
+  9267
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

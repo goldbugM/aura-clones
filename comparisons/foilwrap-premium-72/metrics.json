@@ -1,0 +1,33 @@
+{
+ "slug": "foilwrap-premium-72",
+ "overall": 0.879,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.44,
+ "motion": 0.866,
+ "media": 1.0,
+ "pixel": 0.89,
+ "text_similarity": 1.0,
+ "sections": [
+  9,
+  9
+ ],
+ "headings": [
+  50,
+  50
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  25,
+  25
+ ],
+ "heights": [
+  8717,
+  8717
+ ],
+ "console_errors": 0,
+ "failed_requests": 1,
+ "shell_render_original": false,
+ "side_by_side": true
+}

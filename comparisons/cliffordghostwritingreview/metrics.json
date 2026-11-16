@@ -1,0 +1,33 @@
+{
+ "slug": "cliffordghostwritingreview",
+ "overall": 0.903,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.413,
+ "motion": 0.938,
+ "media": 1.0,
+ "pixel": 1.0,
+ "text_similarity": 1.0,
+ "sections": [
+  8,
+  8
+ ],
+ "headings": [
+  20,
+  20
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  0,
+  0
+ ],
+ "heights": [
+  6492,
+  6492
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

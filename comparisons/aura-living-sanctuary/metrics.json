@@ -1,0 +1,33 @@
+{
+ "slug": "aura-living-sanctuary",
+ "overall": 0.937,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.583,
+ "motion": 1.0,
+ "media": 1.0,
+ "pixel": 1.0,
+ "text_similarity": 1.0,
+ "sections": [
+  19,
+  19
+ ],
+ "headings": [
+  28,
+  28
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  0,
+  0
+ ],
+ "heights": [
+  35660,
+  35660
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

@@ -1,0 +1,1373 @@
+<html lang="fr" style="overflow-x: hidden;"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UPSTAR · Ton compte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
+<style>
+:root{--out:cubic-bezier(.22,1,.36,1);--pop:cubic-bezier(.175,.885,.32,1.275)}
+.m-up{animation:mUp .6s var(--out) both}.m-pop{animation:mPop .42s var(--pop) both}
+.m-mask{display:block;overflow:hidden;padding-bottom:.14em;margin-bottom:-.14em}
+.m-line{display:block;animation:mLine .75s var(--out) both}.m-float{animation:mFloat 6s ease-in-out infinite}
+.m-up,.m-pop,.m-line{animation-delay:calc(var(--i,0)*80ms)}
+@keyframes mUp{from{opacity:0;transform:translateY(16px)}}
+@keyframes mPop{from{opacity:0;transform:scale(.6)}70%{transform:scale(1.06)}}
+@keyframes mLine{from{transform:translateY(105%)}}
+@keyframes mFloat{50%{transform:translateY(-10px)}}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important}}
+/* Progression */
+@keyframes mBar{from{transform:scaleX(var(--from,0))}}
+.seg{animation:mBar .9s var(--out) .3s both}
+/* Micro-interactions */
+@keyframes mBump{50%{transform:scale(1.12)}}
+@keyframes mWake{0%{transform:scale(1)}40%{transform:scale(.96)}75%{transform:scale(1.04)}100%{transform:scale(1)}}
+@keyframes mSpin{to{transform:rotate(1turn)}}
+@keyframes mMorph{0%{border-radius:42% 58% 63% 37%/45% 41% 59% 55%;transform:rotate(0)}50%{border-radius:58% 42% 38% 62%/55% 61% 39% 45%}100%{border-radius:47% 53% 55% 45%/38% 55% 45% 62%;transform:rotate(8deg)}}
+@keyframes igShake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+@keyframes reflet{0%,62%{transform:translateX(-130%) skewX(-18deg)}100%{transform:translateX(230%) skewX(-18deg)}}
+@keyframes point{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+.bump{animation:mBump .32s var(--pop)}
+.wake{animation:mWake .55s var(--pop)}
+.shake{animation:igShake .4s ease-in-out}
+#contenu{transition:opacity .2s ease,transform .2s ease}
+#contenu.m-out{opacity:0;transform:translateX(-24px)}
+/* Grain */
+.grain{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+/* Bouton principal */
+.btn-main{background:linear-gradient(180deg,#FFAE56,#F2436D 55%,#CC3BC9);box-shadow:inset 0 1.5px 0 #ffffff8c,inset 0 -4px 9px #760c484d,0 12px 30px #f0426b61;transition:transform .15s var(--out),opacity .2s}
+.btn-main::after{content:"";position:absolute;top:0;bottom:0;left:0;width:45%;background:linear-gradient(90deg,transparent,#ffffff59,transparent);animation:reflet 3.6s ease-in-out infinite;pointer-events:none}
+.btn-main:active{transform:scale(.97)}
+.btn-main:disabled{opacity:.55}
+/* Champ */
+.champ-m{background:#fff;border:1px solid #E2E8F0;border-radius:20px;box-shadow:0 10px 26px #f0426b3d;transition:border-color .2s,box-shadow .2s}
+.champ-m:focus-within{border-color:#F2436D;box-shadow:0 0 0 4px #f2436d26,0 10px 26px #f0426b3d}
+#saisie.err .champ-m{border-color:#F87171}
+#saisie.err .champ-m:focus-within{box-shadow:0 0 0 4px #f8717126,0 10px 26px #f0426b3d}
+@media(min-width:640px){
+#saisie{background:#fff;border:1px solid #E2E8F0;border-radius:20px;box-shadow:0 10px 26px #f0426b3d;transition:border-color .2s,box-shadow .2s}
+#saisie:focus-within{border-color:#F2436D;box-shadow:0 0 0 4px #f2436d26,0 10px 26px #f0426b3d}
+#saisie.err{border-color:#F87171}
+#saisie.err:focus-within{box-shadow:0 0 0 4px #f8717126,0 10px 26px #f0426b3d}
+#saisie .champ-m{background:none;border:0;box-shadow:none;border-radius:0}
+}
+.ok{transform:scale(0);transition:transform .35s var(--pop)}
+.ok.on{transform:scale(1)}
+/* Anneau de story */
+.u-ring{position:relative;padding:5px;border-radius:9999px}
+.u-ring::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:2.5px;background:#DBDBDB;-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+.u-ring.on::before{background:conic-gradient(from 210deg,#f58529,#dd2a7b,#8134af,#dd2a7b,#f58529);animation:mSpin 1s var(--out)}
+.u-ring.calme::before{animation:none}
+.u-ring.story::before{background:conic-gradient(from 210deg,#f58529,#dd2a7b,#8134af,#dd2a7b,#f58529)}
+/* Tuiles */
+.g{opacity:0;transition:opacity .3s}
+.g.on{opacity:1}
+/* Orbe */
+.orb{width:100%;height:100%;position:relative;background:radial-gradient(circle at 30% 25%,#FFD3A1,#FF8A5B 30%,#F2436D 62%,#CC3BC9);box-shadow:inset -16px -20px 36px #760c4859,inset 12px 14px 24px #ffffff80;animation:mMorph 12s ease-in-out infinite alternate}
+.orb::after{content:"";position:absolute;top:16%;left:22%;width:30%;height:18%;border-radius:50%;background:#fff;opacity:.7;filter:blur(8px)}
+</style>
+<script>
+document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});
+</script>
+<script>
+document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);
+</script>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+  <body class="min-h-screen bg-[#FAFAFA] text-[#475569] antialiased overflow-x-hidden" style="font-family: "Plus Jakarta Sans", sans-serif; background-image: radial-gradient(rgba(180, 165, 155, 0.06) 1.5px, transparent 1.5px); background-size: 32px 32px;">
+    <!-- Grain -->
+    <div class="grain fixed inset-0 pointer-events-none z-[70] opacity-[0.03]" aria-hidden="true"></div>
+
+    <!-- Barre du haut -->
+    <header class="m-up fixed top-3 inset-x-3 z-50" style="--i:0">
+      <div class="mx-auto min-h-16 py-3 pl-2.5 pr-2 sm:pl-3 sm:pr-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 bg-white border border-[#D9D9DE] rounded-xl shadow-[0_6px_24px_#0000001a] max-w-[1200px]">
+        <a href="/" class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <img src="media/d66b2b03-e74b-4284-a21c-bb0807585722_320w.png" alt="" class="w-8 h-8 sm:w-10 sm:h-10 object-contain -rotate-3">
+          <span class="text-base sm:text-xl font-extrabold tracking-tight text-[#0F172A]">
+            UPSTAR
+          </span>
+        </a>
+        <!-- En-tête : Aide + Se connecter (bouton secondaire à bordure), visibles sur mobile et desktop, sans menu déroulant -->
+        <nav aria-label="Compte" class="flex items-center gap-1 sm:gap-2" data-i18n-a="aria-label:nav_compte">
+          <button type="button" data-ouvre-aide="" aria-haspopup="dialog" aria-controls="dlg-donnees" class="h-10 px-1.5 sm:px-2.5 rounded-lg text-[0.8125rem] sm:text-sm font-medium text-[#475569] hover:text-[#0F172A] transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" data-i18n="aide">
+            Aide
+          </button>
+          <a href="/connexion" data-mesure="login_click_header" class="h-10 px-2.5 sm:px-4 inline-flex items-center rounded-xl border border-[#CBD5E1] bg-transparent text-[0.8125rem] sm:text-sm font-semibold text-[#0F172A] whitespace-nowrap hover:border-[#0F172A] transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" data-i18n="connexion">
+            Se connecter
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Progression façon stories -->
+    <div class="pt-24 px-4 sm:px-5">
+      <div class="max-w-[560px] mx-auto">
+        <ol aria-label="Progression" data-i18n-a="aria-label:prog_label" class="flex items-center px-1">
+          <li aria-current="step" class="flex items-center flex-1 min-w-0 after:content-[''] after:flex-1 after:h-px after:mx-2 sm:after:mx-3 after:bg-[#E2E8F0]">
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="w-7 h-7 shrink-0 rounded-full text-white text-xs font-semibold tabular-nums flex items-center justify-center" style="background:linear-gradient(135deg,#FF9A3D,#FF2E5F 50%,#A62AFF)">
+                1
+              </span>
+              <span class="hidden sm:block text-sm font-semibold text-[#0F172A] whitespace-nowrap" data-i18n="prog1">
+                Ton compte
+              </span>
+            </span>
+          </li>
+          <li class="flex items-center flex-1 min-w-0 after:content-[''] after:flex-1 after:h-px after:mx-2 sm:after:mx-3 after:bg-[#E2E8F0]">
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="w-7 h-7 shrink-0 rounded-full bg-white border border-[#CBD5E1] text-[#64748B] text-xs font-semibold tabular-nums flex items-center justify-center">
+                2
+              </span>
+              <span class="hidden sm:block text-sm font-medium text-[#64748B] whitespace-nowrap" data-i18n="prog2">
+                Questions
+              </span>
+            </span>
+          </li>
+          <li class="flex items-center flex-1 min-w-0 after:content-[''] after:flex-1 after:h-px after:mx-2 sm:after:mx-3 after:bg-[#E2E8F0]">
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="w-7 h-7 shrink-0 rounded-full bg-white border border-[#CBD5E1] text-[#64748B] text-xs font-semibold tabular-nums flex items-center justify-center">
+                3
+              </span>
+              <span class="hidden sm:block text-sm font-medium text-[#64748B] whitespace-nowrap" data-i18n="prog3">
+                Diagnostic
+              </span>
+            </span>
+          </li>
+          <li class="flex items-center flex-none">
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="w-7 h-7 shrink-0 rounded-full bg-white border border-[#CBD5E1] text-[#64748B] text-xs font-semibold tabular-nums flex items-center justify-center">
+                4
+              </span>
+              <span class="hidden sm:block text-sm font-medium text-[#64748B] whitespace-nowrap" data-i18n="prog4">
+                Plan
+              </span>
+            </span>
+          </li>
+        </ol>
+        <p class="sm:hidden mt-2.5 text-center text-xs font-medium text-[#64748B]" data-i18n="etape_mobile">
+          Étape 1 sur 4 · Ton compte
+        </p>
+      </div>
+    </div>
+
+    <main id="contenu" class="px-5 pb-20 pt-6 sm:pt-8">
+      <div class="mx-auto lg:grid lg:justify-between max-w-[1200px] lg:grid-cols-[600px_340px]">
+        <!-- Colonne gauche -->
+        <div class="mx-auto lg:mx-0 w-full max-w-[600px]">
+          <!-- Preuve -->
+
+          <!-- Formule (si ?plan=) -->
+          <div id="pastille-formule" class="hidden mt-4">
+            <div class="m-up inline-flex items-center gap-2 bg-white border border-[#F1F5F9] rounded-full pl-2 pr-3.5 py-1.5 shadow-[0_8px_20px_-12px_#0000001f]" style="--i:1">
+              <span class="w-5 h-5 rounded-full flex items-center justify-center" style="background:linear-gradient(45deg,#FF9A3D,#FF2E5F 50%,#A62AFF)">
+                <i data-lucide="check" class="w-3 h-3 text-white" stroke-width="2.5"></i>
+              </span>
+              <span class="text-xs font-semibold text-[#0F172A]">
+                <span id="formule-nom">Formule Croissance retenue</span>
+                <span class="font-medium text-[#94A3B8]" data-i18n="formule_suffixe">
+                  · modifiable avant le paiement
+                </span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Label -->
+
+          <!-- Titre -->
+          <!-- Bandeau appareil reconnu : jamais déclenché par le @ saisi, aucune donnée personnelle affichée -->
+          <div id="bandeau-retour" class="hidden mt-6" role="status">
+            <div class="m-up flex flex-wrap items-center gap-x-2 gap-y-1 bg-white border border-[#F1F5F9] rounded-2xl px-4 py-3 shadow-[0_8px_20px_-12px_#0000001f] text-sm font-medium text-[#475569]" style="--i:1">
+              <span data-i18n="retour">
+                Bon retour 👋 Connecte-toi pour retrouver ton espace.
+              </span>
+              <a href="/connexion" class="font-semibold text-[#DB2777] hover:underline underline-offset-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30 rounded" data-i18n="connexion">
+                Se connecter
+              </a>
+            </div>
+          </div>
+
+          <div class="" id="bloc-titre">
+            <h1 class="text-[2.25rem] sm:text-[3rem] lg:text-[3.5rem] font-extrabold tracking-[-0.04em] leading-[1.05] text-[#0F172A] mt-0">
+              <span class="m-mask">
+                <span class="m-line" style="--i:2" data-i18n="titre1">
+                  C'est quoi ton
+                </span>
+              </span>
+              <span class="m-mask">
+                <span class="m-line" style="--i:3" data-i18n-html="titre2">
+                  <span class="bg-clip-text text-transparent" style="background-image:linear-gradient(45deg,#FF9A3D,#FF2E5F 50%,#A62AFF)">
+                    @Instagram
+                  </span>
+                   ?
+                </span>
+              </span>
+            </h1>
+            <p class="m-up max-w-[460px] text-[1.0625rem] font-medium leading-relaxed text-[#475569] [text-wrap:pretty] mt-3" style="--i:4" data-i18n-html="intro">
+              Entre ton pseudo pour préparer ton diagnostic et ton plan de
+              croissance.
+            </p>
+          </div>
+
+          <!-- Reprise -->
+          <div id="carte-reprise" class="hidden mt-6">
+            <div class="m-up bg-white rounded-3xl border border-[#F1F5F9] shadow-[0_20px_40px_-15px_#0000001a] p-5 sm:p-6" style="--i:2">
+              <div class="flex items-center gap-4">
+                <div class="u-ring story shrink-0">
+                  <img src="media/d200fd07-7b77-40f6-832c-6e6f9f810c77_320w.png" alt="Léa" class="w-14 h-14 rounded-full object-cover bg-[#EFEFEF]">
+                </div>
+                <div class="min-w-0">
+                  <h2 class="text-[1.75rem] sm:text-[2rem] font-extrabold tracking-tight leading-[1.1] text-[#0F172A]" data-i18n-html="reprise_titre">
+                    Content de te
+                    <span class="bg-clip-text text-transparent" style="background-image:linear-gradient(45deg,#FF9A3D,#FF2E5F 50%,#A62AFF)">
+                      revoir
+                    </span>
+                     !
+                  </h2>
+                  <p class="mt-1 text-sm font-medium text-[#64748B]" data-i18n-html="reprise_txt">
+                    Ton plan pour
+                    <span class="font-bold text-[#0F172A]">@lea.dj</span>
+                    est sauvegardé.
+                  </p>
+                </div>
+              </div>
+              <a href="/start/cibles" class="btn-main relative overflow-hidden mt-6 h-14 w-full rounded-[17px] text-white font-extrabold text-[1.0625rem] flex items-center justify-center gap-2" data-i18n="reprendre">
+                Reprendre mon plan
+                <i data-lucide="arrow-right" class="w-5 h-5" stroke-width="2"></i>
+              </a>
+              <button type="button" id="changer" class="mt-3 w-full text-sm font-semibold text-[#64748B] hover:text-[#0F172A] py-2 transition-colors" data-i18n="changer">
+                Changer de compte
+              </button>
+            </div>
+          </div>
+
+          <!-- Champ -->
+          <div id="bloc-champ" class="mt-6">
+            <!-- Correction ciblée A : libellé permanent associé au champ #ig -->
+            <label for="ig" class="m-up block mb-2 text-[0.8125rem] font-semibold text-[#64748B]" style="--i:5" data-i18n="libelle">
+              Ton pseudo Instagram
+            </label>
+            <div id="champ-wrap" class="m-up" style="--i:5">
+              <form id="saisie" novalidate="" class="w-full">
+                <div class="champ-m flex items-center h-[52px] px-3 gap-2.5 min-w-0 box-border sm:pl-4">
+                  <span id="ig-logo" class="relative inline-flex w-[22px] h-[22px] shrink-0">
+                    <iconify-icon icon="skill-icons:instagram" width="22"></iconify-icon>
+                    <span id="ok" class="ok absolute -right-1.5 -bottom-1.5 w-3.5 h-3.5 rounded-full bg-[#22C55E] border-2 border-white flex items-center justify-center" aria-hidden="true">
+                      <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 6 9 17l-5-5"></path>
+                      </svg>
+                    </span>
+                  </span>
+                  <span class="text-lg font-extrabold bg-clip-text text-transparent -mr-1.5" style="background-image:linear-gradient(45deg,#FF9A3D,#FF2E5F 50%,#A62AFF)">
+                    @
+                  </span>
+                  <input id="ig" name="ig" type="text" placeholder="tonpseudo" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" maxlength="80" class="flex-1 min-w-0 h-full bg-transparent outline-none text-lg font-semibold text-[#0F172A] placeholder:text-[#94A3B8] placeholder:font-medium">
+                </div>
+                <button id="btn" type="submit" class="btn-main relative overflow-hidden w-full h-[52px] rounded-[12px] px-5 sm:px-6 min-w-0 box-border whitespace-nowrap shrink-0 text-white font-extrabold text-[1.0625rem] flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" style="box-shadow: rgba(255, 255, 255, 0.55) 0px 1.5px 0px inset, rgba(118, 12, 72, 0.3) 0px -3px 7px inset, rgba(240, 66, 107, 0.2) 0px 4px 10px;">
+                  <span id="btn-txt" class="flex items-center gap-2" data-i18n="analyser">
+                    Continuer
+                    <i data-lucide="arrow-right" class="w-5 h-5" stroke-width="2"></i>
+                  </span>
+                </button>
+              </form>
+            </div>
+            <p id="erreur" role="alert" class="hidden mt-3 items-start gap-1.5 text-[0.8125rem] font-medium text-[#DC2626]">
+              <i data-lucide="circle-alert" class="w-4 h-4 shrink-0 mt-px"></i>
+              <span id="erreur-txt"></span>
+            </p>
+
+            <!-- Correction ciblée D : conditions tarifaires (information seule, aucun paiement déclenché) -->
+            <!-- Connexion client existant, juste après la réassurance. Aucun tarif sur cette page : il est affiché avant le paiement -->
+            <div class="m-up mt-4 space-y-1.5 text-[0.8125rem] font-medium text-[#64748B] leading-relaxed" style="--i:6">
+              <p class="flex items-start gap-1.5 text-[#475569]">
+                <i data-lucide="check" class="w-4 h-4 shrink-0 mt-px text-[#475569]"></i>
+                <span>Offre et paiement présentés à l’étape Plan.</span>
+              </p>
+              <p class="flex items-start gap-1.5">
+                <i data-lucide="lock" class="w-4 h-4 shrink-0 mt-px text-[#64748B]"></i>
+                <span>
+                  <span data-i18n="reassurance">
+                    Aucun mot de passe demandé à cette étape.
+                  </span>
+                  <button type="button" data-ouvre-aide="aide-donnees" aria-haspopup="dialog" aria-controls="dlg-donnees" class="text-[#DB2777] font-semibold hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+                    Utilisation des données
+                  </button>
+                  <span aria-hidden="true" class="text-[#CBD5E1]">·</span>
+                  <button type="button" data-ouvre-aide="aide-tarifs" aria-haspopup="dialog" aria-controls="dlg-donnees" class="text-[#DB2777] font-semibold hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+                    Tarifs
+                  </button>
+                </span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Maquette -->
+        <div id="maquette" class="group relative mt-14 mx-auto lg:mx-0 w-full max-lg:data-[charge=non]:mt-8 max-w-[340px] lg:mt-10" data-charge="non" data-etat="vide">
+          <div class="absolute inset-0 z-0 pointer-events-none translate-x-3 translate-y-3 rotate-[3deg] rounded-[28px] border border-white/70" style="background:linear-gradient(135deg,#FFD9BF,#FFC6DA 50%,#E3CCFF);box-shadow:0 18px 36px -24px #cc3bc966" aria-hidden="true"></div>
+          <div class="m-up relative z-10 bg-white rounded-[28px] border border-[#EADDE8] shadow-[inset_0_1px_0_#ffffff,0_1px_2px_#0f172a0a,0_12px_28px_-16px_#cc3bc940]" style="--i:7">
+            <span class="absolute -top-3.5 w-11 h-11 rounded-2xl bg-white border border-[#F1D9EE] flex items-center justify-center rotate-[8deg] shadow-[inset_0_1px_0_#ffffff,0_8px_18px_-8px_#f0426b80] right-1 sm:-right-3.5" aria-hidden="true">
+              <iconify-icon icon="skill-icons:instagram" width="26"></iconify-icon>
+            </span>
+            <div class="p-5">
+              <div class="flex items-center justify-between gap-2 pr-7 min-h-[1.5rem]">
+                <span data-ui="apercu_ig" class="text-[0.8125rem] font-semibold text-[#64748B]">
+                  Aperçu de ton profil
+                </span>
+                <span id="m-badge" class="hidden shrink-0 rounded-full border border-[#BBF7D0] bg-[#F0FDF4] px-2 py-0.5 text-[0.6875rem] font-semibold text-[#15803D]" data-i18n="badge">
+                  Profil retrouvé
+                </span>
+              </div>
+              <div class="mt-4 flex items-center gap-4 max-lg:group-data-[charge=non]:hidden">
+                <div id="ring" class="u-ring story shrink-0">
+                  <div id="m-avatar" class="w-16 h-16 rounded-full bg-[#FCEFF6] flex items-end justify-center overflow-hidden relative">
+                    <i data-lucide="user-round" class="w-[52px] h-[52px] text-[#F3C6DD] fill-[#F3C6DD] translate-y-2"></i>
+                  </div>
+                </div>
+                <div class="min-w-0 flex-1 grid grid-cols-3 gap-2 text-center">
+                  <div class="min-w-0">
+                    <div class="h-6 flex items-center justify-center">
+                      <span class="hidden group-data-[etat=vide]:block group-data-[etat=recherche]:block group-data-[etat=recherche]:animate-pulse h-2.5 w-10 rounded-full bg-[#F3E8F1]" aria-hidden="true"></span>
+                      <p id="m-pub" class="max-w-full truncate text-base font-bold tabular-nums text-[#0F172A] group-data-[etat=vide]:hidden group-data-[etat=recherche]:hidden">
+                        —
+                      </p>
+                    </div>
+                    <p class="mt-0.5 truncate text-xs font-medium text-[#64748B]" data-i18n="pubs">
+                      publications
+                    </p>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="h-6 flex items-center justify-center">
+                      <span class="hidden group-data-[etat=vide]:block group-data-[etat=recherche]:block group-data-[etat=recherche]:animate-pulse h-2.5 w-10 rounded-full bg-[#F3E8F1]" aria-hidden="true"></span>
+                      <p id="m-abo" class="max-w-full truncate text-base font-bold tabular-nums text-[#0F172A] group-data-[etat=vide]:hidden group-data-[etat=recherche]:hidden">
+                        —
+                      </p>
+                    </div>
+                    <p class="mt-0.5 truncate text-xs font-medium text-[#64748B]" data-i18n="abos">
+                      abonnés
+                    </p>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="h-6 flex items-center justify-center">
+                      <span class="hidden group-data-[etat=vide]:block group-data-[etat=recherche]:block group-data-[etat=recherche]:animate-pulse h-2.5 w-10 rounded-full bg-[#F3E8F1]" aria-hidden="true"></span>
+                      <p id="m-suivi" class="max-w-full truncate text-base font-bold tabular-nums text-[#0F172A] group-data-[etat=vide]:hidden group-data-[etat=recherche]:hidden">
+                        —
+                      </p>
+                    </div>
+                    <p class="mt-0.5 truncate text-xs font-medium text-[#64748B]" data-i18n="suivis">
+                      suivi(e)s
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div class="mt-3 min-w-0 flex flex-col max-lg:group-data-[charge=non]:hidden">
+                <div class="min-w-0 group-data-[etat=vide]:hidden">
+                  <p class="flex items-baseline min-w-0 text-[1.0625rem] font-bold tracking-tight text-[#0F172A]">
+                    <span class="shrink-0 text-[#DB2777]">@</span>
+                    <span id="m-pseudo" class="truncate" style="color:#A8A8A8">
+                      tonpseudo
+                    </span>
+                  </p>
+                  <p id="m-etat" role="status" aria-live="polite" class="mt-0.5 text-xs leading-snug font-medium text-[#64748B] line-clamp-2">
+                    Ton profil apparaîtra ici
+                  </p>
+                </div>
+                <div class="hidden group-data-[etat=vide]:block">
+                  <p data-ui="vide_t" class="text-[1.0625rem] font-bold tracking-tight leading-snug text-[#0F172A]">
+                    Ton profil apparaîtra ici
+                  </p>
+                  <p data-ui="vide_s" class="mt-0.5 text-xs font-medium text-[#64748B]">
+                    Commence par saisir ton pseudo Instagram.
+                  </p>
+                </div>
+                <button id="m-reessayer" type="button" data-ui="reessayer" class="hidden group-data-[etat=erreur]:inline-flex self-start mt-1.5 text-xs font-semibold text-[#DB2777] hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+                  Réessayer
+                </button>
+                <div class="mt-2.5 space-y-1.5" aria-hidden="true">
+                  <span class="block h-2.5 w-3/4 rounded-full bg-[#F3E8F1]"></span>
+                  <span class="block h-2.5 w-1/2 rounded-full bg-[#F3E8F1]"></span>
+                </div>
+              </div>
+
+              <div class="mt-4 rounded-2xl border border-[#F6E3EE] p-2 max-lg:group-data-[charge=non]:hidden" style="background:linear-gradient(135deg,#FFF4EC,#FFEFF5 50%,#F6F0FF)">
+                <div id="tuiles" class="relative grid grid-cols-3 gap-1">
+                  <div class="relative aspect-square rounded-lg bg-white/70 overflow-hidden">
+                    <div class="g absolute inset-0"></div>
+                  </div>
+                  <div class="relative aspect-square rounded-lg bg-white/70 overflow-hidden">
+                    <div class="g absolute inset-0"></div>
+                  </div>
+                  <div class="relative aspect-square rounded-lg bg-white/70 overflow-hidden">
+                    <div class="g absolute inset-0"></div>
+                  </div>
+
+                  <div class="relative aspect-square rounded-lg bg-white/70 overflow-hidden lg:hidden">
+                    <div class="g absolute inset-0"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ce qui t'attend -->
+      </div>
+    </main>
+    <footer class="px-5 pb-10">
+      <div class="mx-auto flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs font-medium text-[#94A3B8] max-w-[1200px]">
+        <span>© UPSTAR</span>
+        <button type="button" id="ouvre-donnees" aria-haspopup="dialog" aria-controls="dlg-donnees" class="hover:text-[#0F172A] transition-colors rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" data-i18n="donnees" data-ouvre-aide="aide-donnees">
+          Comment on utilise tes données
+        </button>
+        <a href="/confidentialite" class="hover:text-[#0F172A] transition-colors" data-i18n="confid">
+          Confidentialité
+        </a>
+        <div id="langue" class="relative">
+          <button id="langue-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="langue-menu" aria-label="Langue : Français" class="h-9 pl-2.5 pr-2 inline-flex items-center gap-1.5 rounded-xl border border-[#CBD5E1] bg-transparent text-xs font-semibold text-[#0F172A] whitespace-nowrap hover:border-[#0F172A] transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+            <i data-lucide="globe" class="w-4 h-4 text-[#475569]"></i>
+            <span id="langue-code">FR</span>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-[#64748B]"></i>
+          </button>
+          <ul id="langue-menu" role="menu" aria-labelledby="langue-btn" class="hidden absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-44 p-1.5 bg-white border border-[#E2E8F0] rounded-2xl shadow-[0_12px_32px_-12px_#0f172a33] z-50">
+            <li role="none">
+              <button type="button" role="menuitemradio" aria-checked="true" data-langue="fr" lang="fr" class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-sm font-medium text-[#0F172A] hover:bg-[#F8FAFC] focus:bg-[#F8FAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F2436D]/30 transition-colors">
+                Français
+                <span class="coche inline-flex">
+                  <i data-lucide="check" class="w-4 h-4 text-[#DB2777]"></i>
+                </span>
+              </button>
+            </li>
+            <li role="none">
+              <button type="button" role="menuitemradio" aria-checked="false" data-langue="en" lang="en" class="w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-sm font-medium text-[#0F172A] hover:bg-[#F8FAFC] focus:bg-[#F8FAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F2436D]/30 transition-colors">
+                English
+                <span class="coche inline-flex invisible">
+                  <i data-lucide="check" class="w-4 h-4 text-[#DB2777]"></i>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Fenêtre « Comment on utilise tes données » : dialog natif (focus piégé, Échap). Contenu à faire valider par le juridique -->
+    <dialog id="dlg-donnees" aria-labelledby="dlg-donnees-titre" class="w-[calc(100%-2.5rem)] max-w-[440px] max-h-[85vh] overflow-y-auto p-0 rounded-3xl border border-[#E2E8F0] bg-white text-[#475569] shadow-[0_12px_32px_-12px_#0f172a33] backdrop:bg-[#0F172A]/40 sm:fixed sm:inset-y-0 sm:right-0 sm:left-auto sm:m-0 sm:h-full sm:max-h-none sm:w-[420px] sm:max-w-none sm:rounded-none sm:rounded-l-3xl">
+      <div class="p-6 sm:p-7">
+        <div class="flex items-start justify-between gap-4">
+          <h2 id="dlg-donnees-titre" class="text-xl font-semibold tracking-tight text-[#0F172A]" data-i18n="aide">
+            Aide
+          </h2>
+          <button type="button" data-ferme="" aria-label="Fermer" class="w-9 h-9 shrink-0 rounded-full border border-[#E2E8F0] flex items-center justify-center text-[#0F172A] hover:border-[#CBD5E1] transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" data-i18n-a="aria-label:fermer">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+        <div class="mt-5 space-y-6 text-sm font-medium leading-relaxed">
+          <section id="aide-pseudo">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Pourquoi demander mon pseudo ?
+            </h3>
+            <p class="mt-1">
+              Pour retrouver ton profil public et préparer les questions, le
+              diagnostic et le plan qui suivent.
+            </p>
+          </section>
+          <section id="aide-donnees">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" data-i18n="donnees">
+              Comment on utilise tes données
+            </h3>
+            <ul class="mt-2 space-y-2.5">
+              <li class="flex gap-2.5">
+                <i data-lucide="eye" class="w-4 h-4 shrink-0 mt-[3px] text-[#DB2777]"></i>
+                <span data-i18n="d1">
+                  On lit uniquement les informations publiques de ton profil
+                  Instagram : pseudo, photo, nombre de publications, d’abonnés
+                  et d’abonnements.
+                </span>
+              </li>
+              <li class="flex gap-2.5">
+                <i data-lucide="database" class="w-4 h-4 shrink-0 mt-[3px] text-[#DB2777]"></i>
+                <span data-i18n="d3">
+                  Ton pseudo est gardé dans ce navigateur pendant le parcours
+                  pour préparer ton diagnostic et ton plan.
+                </span>
+              </li>
+              <li class="flex gap-2.5">
+                <i data-lucide="shield-check" class="w-4 h-4 shrink-0 mt-[3px] text-[#DB2777]"></i>
+                <span data-i18n="d4">
+                  Ton pseudo n’est jamais envoyé à nos outils de mesure
+                  d’audience.
+                </span>
+              </li>
+            </ul>
+          </section>
+          <section id="aide-mdp">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Un mot de passe sera-t-il demandé ?
+            </h3>
+            <p class="mt-1" data-i18n="d2">
+              Aucun mot de passe demandé, aucun accès à tes messages ni à ton
+              compte.
+            </p>
+          </section>
+          <section id="aide-prive">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Que se passe-t-il si mon compte est privé ?
+            </h3>
+            <p class="mt-1">
+              Seules les informations publiques sont lues. Sur un compte privé,
+              certaines données ne sont pas accessibles : le diagnostic se fonde
+              alors sur celles disponibles.
+            </p>
+          </section>
+          <section id="aide-tarifs">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Combien coûte le service ?
+            </h3>
+            <p class="mt-1">
+              7 jours à 14,99 €, puis 84,99 €/mois, avec renouvellement
+              automatique.
+            </p>
+          </section>
+          <section id="aide-paiement">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Quand le paiement intervient-il ?
+            </h3>
+            <p class="mt-1">
+              À l’étape Plan, après le diagnostic. L’offre et ses conditions
+              sont affichées et confirmées explicitement avant tout engagement.
+            </p>
+          </section>
+          <section id="aide-resiliation">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Comment résilier ?
+            </h3>
+            <p class="mt-1">
+              Depuis ton espace client, pour arrêter le renouvellement
+              automatique.
+            </p>
+          </section>
+          <section id="aide-contact">
+            <h3 class="text-[0.9375rem] font-semibold text-[#0F172A] rounded focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30">
+              Comment contacter l’assistance ?
+            </h3>
+            <p class="mt-1">
+              Depuis la page
+              <a href="/aide" class="font-semibold text-[#DB2777] hover:underline underline-offset-2">
+                Aide
+              </a>
+              , où se trouvent les moyens de contact.
+            </p>
+          </section>
+        </div>
+        <a href="/confidentialite" class="mt-6 inline-block text-sm font-semibold text-[#DB2777] hover:underline underline-offset-2" data-i18n="lire">
+          Lire la politique de confidentialité
+        </a>
+        <button type="button" data-ferme="" class="mt-5 w-full h-12 rounded-[14px] border border-[#D9D9DE] bg-transparent text-sm font-semibold text-[#0F172A] hover:border-[#0F172A] transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#F2436D]/30" data-i18n="compris">
+          J’ai compris
+        </button>
+      </div>
+    </dialog>
+    <script>
+      /* ===== Script commun (zone à préserver) ===== */
+      try {
+      window.U = {
+      rejoue: function (el, c) { if (!el) return; el.style.setProperty('--i', 0); el.classList.remove(c); void el.offsetWidth; el.classList.add(c); },
+      sortie: function (url) { var m = document.getElementById('contenu'); if (m) m.classList.add('m-out'); setTimeout(function () { window.location.href = url; }, 200); },
+      odometre: function (el, n) { if (!el) return; var s = performance.now(), d = 800; function f(t) { var p = Math.min(1, (t - s) / d), e = 1 - Math.pow(1 - p, 3); el.textContent = Math.round(n * e).toLocaleString('fr-FR'); if (p < 1) requestAnimationFrame(f); } requestAnimationFrame(f); },
+      coeur: function (el, blanc) { if (!el) return; if (getComputedStyle(el).position === 'static') el.style.position = 'relative'; var d = document.createElement('div'); d.setAttribute('aria-hidden', 'true'); d.style.cssText = 'position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;pointer-events:none;z-index:5;filter:drop-shadow(0 6px 14px rgba(0,0,0,.18))'; d.innerHTML = '<svg viewBox="0 0 24 24" width="64" height="64" fill="' + (blanc ? '#ffffff' : '#FF3040') + '"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>'; el.appendChild(d); if (!d.animate) { setTimeout(function () { d.remove(); }, 900); return; } var a = d.animate([{ transform: 'scale(0)', opacity: 0 }, { transform: 'scale(1.15)', opacity: 1, offset: .3 }, { transform: 'scale(1) translateY(-6px)', opacity: 1, offset: .55 }, { transform: 'scale(.9) translateY(-38px)', opacity: 0 }], { duration: 1100, easing: 'cubic-bezier(.22,1,.36,1)' }); a.onfinish = function () { d.remove(); }; }
+      };
+      lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+      } catch (e) { console.warn(e); }
+
+      /* ===== Page /start ===== */
+      try {
+      var $ = function (id) { return document.getElementById(id); };
+
+      /* Mesure : nom d’événement uniquement, jamais de pseudo, e-mail, jeton ou statut client */
+      var vus = {};
+      function mesure(nom, unique) { if (unique) { if (vus[nom]) return; vus[nom] = true; } try { (window.dataLayer = window.dataLayer || []).push({ event: nom }); } catch (x) {} }
+      mesure('step1_view', true);
+
+      /* Session. DÉPENDANCE : la redirection d’une session valide doit être faite côté serveur (middleware sur /start et /start/*, session expirée = invalide). Cet appel n’est qu’un filet côté client. */
+      try { fetch('/api/session', { credentials: 'same-origin', headers: { Accept: 'application/json' } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) { if (s && s.valide === true) location.replace('/espace'); }).catch(function () {}); } catch (x) {}
+
+      var RE = /^[a-z0-9._]{1,30}$/; /* règle de validation de l’intégration actuelle */
+      var MSG_VIDE = 'Entre ton @ pour continuer';
+      var MSG_FORMAT = 'Un pseudo contient uniquement des lettres, des chiffres, des points et des _ (30 caractères max).';
+      var MSG_URL = 'Ce lien n’est pas un profil Instagram. Colle le lien de ton profil ou ton pseudo.';
+      var ETATS = {
+        vide: 'Ton profil apparaîtra ici',
+        introuvable: 'On ne trouve pas ce compte. Vérifie ton pseudo.',
+        prive: 'Ce compte est privé. Certaines données ne sont pas accessibles.',
+        indispo: 'La recherche est momentanément indisponible. Réessaie dans un instant.',
+        trouve: 'Vérifie que c’est bien toi, puis clique sur « Analyser mon profil ».'
+      };
+      /* DÉPENDANCE : endpoint d’aperçu Instagram. Réponse attendue { statut: 'trouve'|'prive'|'introuvable', photo, publications, abonnes, abonnements, miniatures[] }. Données Instagram uniquement, aucune information d’abonnement UPSTAR. */
+      var API_APERCU = '/api/instagram/apercu';
+
+      var form = $('saisie'), inp = $('ig'), btn = $('btn'), btnTxt = $('btn-txt'), logo = $('ig-logo'), ok = $('ok');
+      var err = $('erreur'), errTxt = $('erreur-txt'), mp = $('m-pseudo'), ring = $('ring'), tuiles = $('tuiles');
+      var etat = $('m-etat'), badge = $('m-badge'), maquette = $('maquette'), avatar = $('m-avatar'), stats = [$('m-pub'), $('m-abo'), $('m-suivi')];
+      var gs = Array.prototype.slice.call(document.querySelectorAll('#tuiles .g'));
+      var titre = $('bloc-titre'), champ = $('bloc-champ'), reprise = $('carte-reprise');
+      var btnHtml = btnTxt.innerHTML;
+      var timer = null, touche = false, premiereFois = true, enCours = false;
+      var cache = {}, jeton = 0, enVol = null, pseudoCourant = '', mesures = {};
+      var RESERVES = ['p', 'reel', 'reels', 'stories', 'explore', 'tv', 'accounts', 'direct', 'about', 'legal', 'developer', 'web', 'challenge'];
+
+      /* Normalisation : « nike », « @nike » et une URL de profil donnent « nike » ; publication, reel ou autre site renvoient null */
+      function estUrl(v) { return /^https?:\/\/|^www\.|\/|instagram\.com|instagr\.am/i.test(String(v).trim()); }
+      function depuisUrl(v) {
+        var u; try { u = new URL(/^https?:\/\//i.test(v) ? v : 'https://' + v); } catch (x) { return null; }
+        var h = u.hostname.toLowerCase().replace(/^(www\.|m\.)/, '');
+        if (h !== 'instagram.com' && h !== 'instagr.am') return null;
+        var p = u.pathname.split('/').filter(Boolean);
+        if (p.length !== 1 || RESERVES.indexOf(p[0].toLowerCase()) > -1) return null;
+        try { return decodeURIComponent(p[0]).replace(/^@+/, '').toLowerCase(); } catch (x) { return null; }
+      }
+      function nettoie(raw) { var v = String(raw).trim(); if (!v) return ''; if (estUrl(v)) return depuisUrl(v); return v.replace(/[@\s]/g, '').toLowerCase(); }
+
+      function majPseudo(v) { mp.textContent = v || 'tonpseudo'; mp.style.color = v ? '#0F172A' : '#A8A8A8'; }
+      /* États de l’aperçu dans la même carte ; repliée sur mobile tant qu’aucun profil n’est chargé */
+      function setEtat(type, txt) {
+        maquette.setAttribute('data-charge', (type === 'trouve' || type === 'prive') ? 'oui' : 'non');
+        etat.textContent = txt;
+        etat.style.color = (type === 'introuvable' || type === 'indispo') ? '#B91C1C' : (type === 'trouve' ? '#0F172A' : '#64748B');
+        etat.setAttribute('aria-busy', type === 'recherche' ? 'true' : 'false');
+        badge.classList.toggle('hidden', type !== 'trouve');
+      }
+      function videApercu() {
+        stats.forEach(function (s) { s.textContent = '—'; });
+        var im = avatar.querySelector('img'); if (im) im.remove();
+        ring.classList.remove('on', 'calme');
+        gs.forEach(function (g) { g.classList.remove('on', 'm-pop'); g.style.animationDelay = ''; });
+      }
+      function nombre(n) { return typeof n === 'number' && isFinite(n) ? n.toLocaleString('fr-FR') : '—'; }
+      function sur(u) { return typeof u === 'string' && /^https:\/\//i.test(u) ? u : null; }
+      /* Uniquement les données renvoyées par la recherche : aucune photo, statistique ou miniature inventée */
+      function remplit(r, silence) {
+        stats[0].textContent = nombre(r.publications); stats[1].textContent = nombre(r.abonnes); stats[2].textContent = nombre(r.abonnements);
+        var ph = sur(r.photo);
+        if (ph) { var im = document.createElement('img'); im.src = ph; im.alt = ''; im.referrerPolicy = 'no-referrer'; im.className = 'absolute inset-0 w-full h-full object-cover'; avatar.appendChild(im); }
+        var mins = Array.isArray(r.miniatures) ? r.miniatures : [];
+        gs.forEach(function (g, i) { var m = sur(mins[i]); if (!m) return; g.style.background = 'center / cover no-repeat url(' + JSON.stringify(m) + ')'; g.classList.add('on'); if (!silence) { U.rejoue(g, 'm-pop'); g.style.animationDelay = (i * 90) + 'ms'; } });
+        if (silence) { ring.classList.add('on', 'calme'); return; }
+        ring.classList.remove('calme'); U.rejoue(ring, 'on'); U.coeur(tuiles, true);
+        if (premiereFois) { premiereFois = false; U.rejoue(btn, 'wake'); }
+      }
+      function mesureProfil(nom, v) { if (mesures[nom + '|' + v]) return; mesures[nom + '|' + v] = true; mesure(nom); }
+      function applique(v, r, silence) {
+        if (v !== pseudoCourant) return; /* réponse obsolète ignorée */
+        if (r.statut === 'introuvable') { setEtat('introuvable', ETATS.introuvable); mesureProfil('profile_not_found', v); return; }
+        if (r.statut === 'prive') { setEtat('prive', ETATS.prive); mesureProfil('profile_private', v); }
+        else { setEtat('trouve', ETATS.trouve); mesureProfil('profile_found', v); }
+        remplit(r, silence);
+      }
+      function frais(v) { return !!cache[v] && (Date.now() - cache[v].t < 300000); }
+      function cherche(v, silence) {
+        var mon = ++jeton;
+        if (enVol) enVol.abort();
+        enVol = window.AbortController ? new AbortController() : null;
+        setEtat('recherche', 'Recherche de @' + v + '…');
+        fetch(API_APERCU + '?u=' + encodeURIComponent(v), { credentials: 'same-origin', headers: { Accept: 'application/json' }, signal: enVol ? enVol.signal : undefined })
+          .then(function (r) { if (r.status === 404) return { statut: 'introuvable' }; if (!r.ok) throw new Error('http'); return r.json(); })
+          .then(function (r) { if (mon !== jeton) return; if (!r || ['trouve', 'prive', 'introuvable'].indexOf(r.statut) < 0) throw new Error('format'); cache[v] = { t: Date.now(), r: r }; applique(v, r, silence); })
+          .catch(function (e) { if (mon !== jeton || (e && e.name === 'AbortError')) return; setEtat('indispo', ETATS.indispo); });
+      }
+      /* Recherche automatique = aperçu seulement : 600 ms sans frappe, 3 caractères minimum, jamais de changement de page */
+      function maj(v, silence) {
+        clearTimeout(timer); jeton++;
+        if (enVol) { enVol.abort(); enVol = null; }
+        pseudoCourant = v || '';
+        majPseudo(pseudoCourant); ok.classList.remove('on'); videApercu(); setEtat('vide', ETATS.vide);
+        if (!v || !RE.test(v)) return;
+        ok.classList.add('on'); mesure('username_valid', true);
+        if (v.length < 3) return; /* seuil de recherche uniquement, le pseudo reste valide */
+        if (frais(v)) { applique(v, cache[v].r, true); return; }
+        timer = setTimeout(function () { cherche(v, silence); }, silence ? 0 : 600);
+      }
+
+      function montreErreur(msg, secoue) {
+        errTxt.textContent = msg;
+        err.classList.remove('hidden'); err.classList.add('flex');
+        form.classList.add('err');
+        inp.setAttribute('aria-invalid', 'true'); inp.setAttribute('aria-describedby', 'erreur');
+        if (secoue) U.rejoue(form, 'shake');
+      }
+      function cacheErreur() {
+        err.classList.add('hidden'); err.classList.remove('flex');
+        form.classList.remove('err');
+        inp.removeAttribute('aria-invalid'); inp.removeAttribute('aria-describedby');
+      }
+
+      inp.addEventListener('focus', function () { mesure('input_focus', true); });
+      inp.addEventListener('input', function (e) {
+        if (enCours) return;
+        var raw = inp.value, colle = e && e.inputType === 'insertFromPaste', v;
+        touche = true; U.rejoue(logo, 'bump'); cacheErreur();
+        /* URL tapée au clavier : normalisée au collage, à la sortie du champ ou à l’envoi, pour ne pas la tronquer pendant la frappe */
+        if (estUrl(raw) && !colle) { maj(''); return; }
+        v = nettoie(raw);
+        if (v === null) { maj(''); montreErreur(MSG_URL, false); return; }
+        if (v !== raw) inp.value = v;
+        maj(v);
+      });
+      inp.addEventListener('blur', function () {
+        if (enCours) return;
+        if (touche && !inp.value.trim()) { montreErreur(MSG_VIDE, false); return; }
+        if (estUrl(inp.value)) { var v = nettoie(inp.value); if (v === null) { montreErreur(MSG_URL, false); return; } inp.value = v; maj(v); }
+      });
+
+      /* Entrée et clic : même action. Le bouton reste actionnable champ vide */
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (enCours) return;
+        mesure('cta_click');
+        var v = nettoie(inp.value);
+        if (v === null) { montreErreur(MSG_URL, true); inp.focus(); return; }
+        if (v !== inp.value) inp.value = v;
+        if (!v) { montreErreur(MSG_VIDE, true); inp.focus(); return; }
+        if (!RE.test(v)) { montreErreur(MSG_FORMAT, true); inp.focus(); return; }
+        if (frais(v) && cache[v].r.statut === 'introuvable') { montreErreur(ETATS.introuvable, true); inp.focus(); return; }
+        /* Verrou anti double clic côté client. DÉPENDANCE : la vraie protection (idempotence, tentative de paiement unique, contrôle atomique, onglets multiples) est côté serveur */
+        enCours = true; clearTimeout(timer);
+        try { sessionStorage.setItem('upstarIg', v); } catch (x) {}
+        btn.style.width = btn.offsetWidth + 'px';
+        btn.style.height = btn.offsetHeight + 'px';
+        btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.style.opacity = '1';
+        inp.readOnly = true;
+        btnTxt.classList.add('whitespace-nowrap'); btnTxt.setAttribute('aria-live', 'polite');
+        btnTxt.textContent = 'Analyse en cours…';
+        mesure('step1_complete', true);
+        setTimeout(function () { U.sortie('/start/profil'); }, 400);
+      });
+      /* Retour arrière (cache navigateur) : bouton et saisie de nouveau utilisables */
+      window.addEventListener('pageshow', function (e) {
+        if (!e.persisted) return;
+        enCours = false; btn.disabled = false; btn.removeAttribute('aria-busy'); btn.style.width = ''; btn.style.height = '';
+        inp.readOnly = false; btnTxt.classList.remove('whitespace-nowrap'); btnTxt.innerHTML = btnHtml;
+        var c = $('contenu'); if (c) c.classList.remove('m-out');
+      });
+
+      /* Liens de connexion mesurés */
+      Array.prototype.forEach.call(document.querySelectorAll('[data-mesure]'), function (a) { a.addEventListener('click', function () { mesure(a.getAttribute('data-mesure')); }); });
+
+      /* Fenêtre données */
+      var dlg = $('dlg-donnees'), ouvre = $('ouvre-donnees');
+      ouvre.addEventListener('click', function () { if (dlg.showModal) dlg.showModal(); else location.href = '/confidentialite'; });
+      Array.prototype.forEach.call(dlg.querySelectorAll('[data-ferme]'), function (b) { b.addEventListener('click', function () { dlg.close(); }); });
+      dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+      dlg.addEventListener('close', function () { ouvre.focus(); });
+
+      /* Appareil reconnu. DÉPENDANCE : marqueur posé par la connexion existante (cookie « upstar_appareil=1 », sans identité). Jamais déduit du @ saisi */
+      if (/(?:^|;\s*)upstar_appareil=1(?:;|$)/.test(document.cookie)) { $('bandeau-retour').classList.remove('hidden'); mesure('returning_device_detected', true); }
+
+      /* Formule */
+      var plans = { croissance: 'Formule Croissance retenue', elite: 'Formule Élite retenue', essai: 'Essai 7 jours retenu' };
+      var plan = new URLSearchParams(location.search).get('plan');
+      if (plan && plans[plan]) { $('formule-nom').textContent = plans[plan]; $('pastille-formule').classList.remove('hidden'); }
+
+      /* Pré-remplissage au retour, sans fête */
+      var deja = null;
+      try { deja = sessionStorage.getItem('upstarIg'); } catch (x) {}
+      function etatNormal() { reprise.classList.add('hidden'); titre.classList.remove('hidden'); champ.classList.remove('hidden'); }
+      function appliqueEtat() {
+        var h = location.hash;
+        if (h === '#reprise') {
+          titre.classList.add('hidden'); champ.classList.add('hidden'); reprise.classList.remove('hidden');
+          cacheErreur(); maj(''); majPseudo('lea.dj'); ring.classList.add('on', 'calme');
+        } else if (h === '#introuvable') { /* état de démonstration */
+          etatNormal(); inp.value = 'lea.dj'; maj(''); majPseudo('lea.dj');
+          setEtat('introuvable', ETATS.introuvable); montreErreur(ETATS.introuvable, true);
+        } else {
+          etatNormal();
+          if (deja && RE.test(deja)) { inp.value = deja; premiereFois = false; maj(deja, true); }
+        }
+      }
+      appliqueEtat();
+      window.addEventListener('hashchange', appliqueEtat);
+
+      $('changer').addEventListener('click', function () {
+        try { sessionStorage.removeItem('upstarIg'); } catch (x) {}
+        deja = null;
+        history.replaceState(null, '', location.pathname + location.search);
+        etatNormal(); inp.value = ''; touche = false;
+        maj(''); cacheErreur();
+        U.rejoue($('champ-wrap'), 'm-up');
+        inp.focus();
+      });
+      } catch (e) { console.warn(e); }
+    </script>
+
+    <!-- BILAN (non affiché)
+À préserver lors des régénérations : logo, titre et dégradé « @ Instagram », deux colonnes desktop, fond pointillé, carte Instagram + sphère, badge avatars, formulaire et bouton « Analyser mon profil », bloc « Ce qui t’attend ».
+Modifié : en-tête Aide + Se connecter ; progression 4 phases (flèche retour, « 01 TON COMPTE » et « ÉTAPE 1/6 » retirés) ; promesse sans délai ; tarif retiré de cette page ; lien données en fenêtre accessible ; « Déjà un compte UPSTAR ? Se connecter » ; bandeau appareil reconnu ; aperçu à états (vide, recherche, trouvé, introuvable, privé, indisponible) avec rejet des réponses obsolètes et cache 5 min ; normalisation d’URL stricte ; bulle « +1 abonné » et fausses miniatures retirées ; carte repliée sur mobile ; événements de mesure sans donnée personnelle.
+Dépendances restantes : /api/session et redirection serveur sur /start et /start/* ; /api/instagram/apercu ; page /connexion avec « Pas encore de compte ? Commencer » vers /start ; page /aide ; cookie upstar_appareil posé à la connexion ; affichage « 7 jours à 14,99 €, puis 84,99 €/mois. Renouvellement automatique. » avant paiement ; vérification d’identité commune, lien magique à réponse neutre, limitation des demandes ; contrôle serveur e-mail vérifié + identifiant Instagram stable, idempotence et verrou atomique du paiement ; événement existing_subscription_blocked côté serveur ; correspondance 6 écrans / 4 phases et chiffre « +2 200 » à confirmer.
+-->
+
+    <style>
+      #saisie{background:#fff;border:1px solid #E2E8F0;border-radius:20px;box-shadow:0 10px 26px #f0426b3d;transition:border-color .2s,box-shadow .2s;padding:8px;box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-items:center;width:100%;max-width:100%;min-width:0;position:relative;margin:0}#saisie>*{min-width:0;max-width:100%;box-sizing:border-box}#saisie:focus-within{border-color:#F2436D;box-shadow:0 0 0 4px #f2436d26,0 10px 26px #f0426b3d}#saisie.err{border-color:#F87171}#saisie.err:focus-within{box-shadow:0 0 0 4px #f8717126,0 10px 26px #f0426b3d}#saisie .champ-m,#saisie .champ-m:focus-within,#saisie.err .champ-m,#saisie.err .champ-m:focus-within{background:none;border:0;box-shadow:none;border-radius:0;min-width:0;width:100%;box-sizing:border-box;margin:0}#saisie #btn{position:relative;box-sizing:border-box;min-width:0;max-width:100%;width:100%;margin:0;justify-self:stretch;border-radius:12px}#saisie #btn-txt{min-width:0;max-width:100%;justify-content:center}@media(min-width:640px){#saisie{grid-template-columns:minmax(0,1fr) auto}#saisie #btn{width:auto;justify-self:end}}@keyframes plaques{50%{transform:translateY(-4px)}}.plaques{animation:plaques 12s ease-in-out infinite}
+    </style>
+
+    <script>
+      (function(){try{
+      /* Textes d’état (page) */
+      if(window.ETATS){ETATS.introuvable='Aucun profil trouvé avec ce pseudo. Vérifie l’orthographe.';ETATS.indispo='Impossible de récupérer l’aperçu pour le moment. Réessaie.';ETATS.trouve='Profil retrouvé. Vérifie que c’est bien toi, puis clique sur « Continuer ».';}
+      window.MSG_VIDE='Entre ton pseudo Instagram pour continuer.';window.MSG_FORMAT='Vérifie ton pseudo Instagram, par exemple : tonpseudo.';
+      /* Traductions complémentaires */
+      var D=document,EN={analyser:'Continue',badge:'Profile found',c1:'A few answers to personalize your diagnosis.',c2:'A report based on the available data.',c3:'Your next actions to grow your account.',reassurance:'No password is requested at this step.',tarifs_note:'The offer and payment are shown at the Plan step.',tarifs:'See pricing',etape_mobile:'Step 1 of 4 · Your account'},EN_HTML={intro:'Find your profile, then answer a few questions to prepare your diagnosis and growth plan.'},FR={},FR_HTML={};
+      function noeud(el){for(var i=0;i<el.childNodes.length;i++){var n=el.childNodes[i];if(n.nodeType===3&&n.nodeValue.trim())return n;}return null;}
+      Object.keys(EN).forEach(function(k){var el=D.querySelector('[data-i18n="'+k+'"]');if(el){var n=noeud(el);FR[k]=(n?n.nodeValue:el.textContent).trim();}});
+      Object.keys(EN_HTML).forEach(function(k){var el=D.querySelector('[data-i18n-html="'+k+'"]');if(el)FR_HTML[k]=el.innerHTML;});
+      function applique(){var en=D.documentElement.lang==='en',T=en?EN:FR,H=en?EN_HTML:FR_HTML;Object.keys(T).forEach(function(k){Array.prototype.forEach.call(D.querySelectorAll('[data-i18n="'+k+'"]'),function(el){if(el.id==='btn-txt'&&window.enCours)return;var n=noeud(el);if(n)n.nodeValue=' '+T[k]+' ';else el.textContent=T[k];});});Object.keys(H).forEach(function(k){Array.prototype.forEach.call(D.querySelectorAll('[data-i18n-html="'+k+'"]'),function(el){el.innerHTML=H[k];});});if(!window.enCours){var b=D.getElementById('btn-txt');if(b&&window.btnHtml!=null)window.btnHtml=b.innerHTML;}}
+      if(window.MutationObserver)new MutationObserver(applique).observe(D.documentElement,{attributes:true,attributeFilter:['lang']});
+      /* Panneau d’aide : ouverture à la section demandée, retour du focus au déclencheur */
+      var dlg=D.getElementById('dlg-donnees'),dern=null;
+      function mesure(n){try{(window.dataLayer=window.dataLayer||[]).push({event:n});}catch(x){}}
+      Array.prototype.forEach.call(D.querySelectorAll('[data-ouvre-aide]'),function(b){b.addEventListener('click',function(){if(!dlg)return;dern=b;var s=b.getAttribute('data-ouvre-aide');if(!dlg.open){if(dlg.showModal)dlg.showModal();else{location.href='/aide';return;}}mesure('help_open');var c=s&&D.getElementById(s);if(c){c.scrollIntoView({block:'start'});var h=c.querySelector('h3');if(h){h.setAttribute('tabindex','-1');h.focus({preventScroll:true});}}else{dlg.scrollTop=0;}});});
+      if(dlg)dlg.addEventListener('close',function(){if(dern){dern.focus();dern=null;}});
+      }catch(e){console.warn(e);}})();
+    </script>
+    <script>
+      (function(){var W=window,Dc=document;function $i(id){return Dc.getElementById(id);}try{var pb=$i('prog-barre');if(pb){var go=function(){pb.style.width=(pb.getAttribute('data-valeur')||'0')+'%';};if(W.requestAnimationFrame)requestAnimationFrame(function(){requestAnimationFrame(go);});else go();}}catch(e){console.warn(e);}try{var G='background-image:linear-gradient(45deg,#FF9A3D,#FF2E5F 50%,#A62AFF)';var EN={aide:'Help',connexion:'Log in',nav_compte:'Account',prog_label:'Progress',prog_aria:'Step 1 of 4: Your account',prog1:'Your account',prog2:'Questions',prog3:'Diagnosis',prog4:'Plan',preuve:'Already <span class="font-bold text-[#DB2777]">2,200+</span> creators',formule_suffixe:'· can be changed before payment',retour:'Welcome back 👋 Log in to access your space.',titre1:'What’s your',titre2:'<span class="bg-clip-text text-transparent" style="'+G+'">Instagram @</span>?',intro:'We analyze your public profile to prepare <span class="font-serif italic text-[#64748B]">your growth plan</span>.',reprise_titre:'Good to see you <span class="bg-clip-text text-transparent" style="'+G+'">again</span>!',reprise_txt:'Your plan for <span class="font-bold text-[#0F172A]">@lea.dj</span> is saved.',reprendre:'Resume my plan',changer:'Switch account',libelle:'Your Instagram username',analyser:'Analyze my profile',deja_compte:'Already have an UPSTAR account?',badge:'Profile found ✓',apercu:'PREVIEW',pubs:'posts',abos:'followers',suivis:'following',attend:'WHAT’S NEXT',c1:'3 quick questions to get it right.',c2t:'Diagnosis',c2:'Your stats and estimated potential.',c3:'Your targets and actions, ready to launch.',donnees:'How we use your data',confid:'Privacy',fermer:'Close',d1:'We only read the public information on your Instagram profile: username, photo, number of posts, followers and following.',d2:'No password required, no access to your messages or your account.',d3:'Your username is kept in this browser during the flow to prepare your diagnosis and your plan.',d4:'Your username is never sent to our audience measurement tools.',lire:'Read the privacy policy',compris:'Got it'};var EN_DYN={vide:'Your profile will appear here',introuvable:'We can’t find this account. Check your username.',prive:'This account is private. Some data isn’t accessible.',indispo:'Search is temporarily unavailable. Try again in a moment.',trouve:'Check that it’s really you, then click “Analyze my profile”.',MSG_VIDE:'Enter your @ to continue',MSG_FORMAT:'A username only contains letters, numbers, periods and _ (30 characters max).',MSG_URL:'This link isn’t an Instagram profile. Paste your profile link or your username.',croissance:'Growth plan selected',elite:'Elite plan selected',essai:'7-day trial selected',titre:'UPSTAR · Your account',recherche:'Looking up @',analyse:'Analyzing…',btn_label:'Language: English'};var FR={},FR_DYN={recherche:'Recherche de @',analyse:'Analyse en cours…',btn_label:'Langue : Français'};var EK=['vide','introuvable','prive','indispo','trouve'],MK=['MSG_VIDE','MSG_FORMAT','MSG_URL'],PK=['croissance','elite','essai'];EK.forEach(function(k){FR_DYN[k]=W.ETATS?W.ETATS[k]:'';});MK.forEach(function(k){FR_DYN[k]=W[k]||'';});PK.forEach(function(k){FR_DYN[k]=W.plans?W.plans[k]:'';});FR_DYN.titre=Dc.title;var els=Array.prototype.slice.call(Dc.querySelectorAll('[data-i18n],[data-i18n-html],[data-i18n-a]'));function noeud(el){for(var i=0;i<el.childNodes.length;i++){var n=el.childNodes[i];if(n.nodeType===3&&n.nodeValue.trim())return n;}return null;}function attrs(el){var a=el.getAttribute('data-i18n-a');return a?a.split(';').map(function(p){return p.split(':');}):[];}els.forEach(function(el){var k=el.getAttribute('data-i18n');if(k&&!(k in FR)){var n=noeud(el);FR[k]=(n?n.nodeValue:el.textContent).trim();}k=el.getAttribute('data-i18n-html');if(k&&!(k in FR))FR[k]=el.innerHTML;attrs(el).forEach(function(q){if(!(q[1] in FR))FR[q[1]]=el.getAttribute(q[0])||'';});});var courante='fr',etat=$i('m-etat'),errT=$i('erreur-txt'),bt=$i('btn-txt'),lb=$i('langue-btn'),lm=$i('langue-menu');var items=lm?Array.prototype.slice.call(lm.querySelectorAll('[data-langue]')):[];function dyn(l){return l==='en'?EN_DYN:FR_DYN;}function corrige(){var D=dyn(courante),A=dyn(courante==='en'?'fr':'en');if(etat&&etat.textContent.indexOf(A.recherche)===0)etat.textContent=D.recherche+etat.textContent.slice(A.recherche.length);if(bt&&bt.textContent.trim()===A.analyse)bt.textContent=D.analyse;}function majBouton(l){if(!lb)return;var c=$i('langue-code');if(c)c.textContent=l.toUpperCase();lb.setAttribute('aria-label',dyn(l).btn_label);items.forEach(function(b){var on=b.getAttribute('data-langue')===l;b.setAttribute('aria-checked',on?'true':'false');var s=b.querySelector('.coche');if(s)s.classList.toggle('invisible',!on);});}function applique(l){var T=l==='en'?EN:FR,D=dyn(l),A=dyn(courante);els.forEach(function(el){if(el.id==='btn-txt'&&W.enCours)return;var k=el.getAttribute('data-i18n');if(k&&T[k]!=null){var n=noeud(el);if(n){var v=n.nodeValue;n.nodeValue=v.slice(0,v.length-v.trimStart().length)+T[k]+v.slice(v.trimEnd().length);}else el.textContent=T[k];}k=el.getAttribute('data-i18n-html');if(k&&T[k]!=null)el.innerHTML=T[k];attrs(el).forEach(function(q){if(T[q[1]]!=null)el.setAttribute(q[0],T[q[1]]);});});EK.forEach(function(k){if(etat&&etat.textContent.trim()===A[k])etat.textContent=D[k];if(errT&&errT.textContent===A[k])errT.textContent=D[k];if(W.ETATS)W.ETATS[k]=D[k];});MK.forEach(function(k){if(errT&&errT.textContent===A[k])errT.textContent=D[k];W[k]=D[k];});if(W.plans){PK.forEach(function(k){W.plans[k]=D[k];});var p=new URLSearchParams(location.search).get('plan'),fn=$i('formule-nom');if(p&&W.plans[p]&&fn)fn.textContent=W.plans[p];}if(bt&&!W.enCours)W.btnHtml=bt.innerHTML;Dc.title=D.titre;Dc.documentElement.lang=l;courante=l;majBouton(l);corrige();}if(W.MutationObserver){var mo=new MutationObserver(corrige);[etat,bt].forEach(function(n){if(n)mo.observe(n,{childList:true,characterData:true,subtree:true});});}function ouvert(){return !!lm&&!lm.classList.contains('hidden');}function ouvre(i){lm.classList.remove('hidden');lb.setAttribute('aria-expanded','true');if(i==null){i=0;items.forEach(function(b,j){if(b.getAttribute('aria-checked')==='true')i=j;});}items[i].focus();}function ferme(f){if(!ouvert())return;lm.classList.add('hidden');lb.setAttribute('aria-expanded','false');if(f)lb.focus();}if(lb&&lm&&items.length){lb.addEventListener('click',function(){if(ouvert())ferme(true);else ouvre();});lb.addEventListener('keydown',function(e){if(e.key==='ArrowDown'){e.preventDefault();ouvre();}else if(e.key==='ArrowUp'){e.preventDefault();ouvre(items.length-1);}});lm.addEventListener('keydown',function(e){var i=items.indexOf(Dc.activeElement),n=items.length;if(e.key==='ArrowDown'){e.preventDefault();items[(i+1)%n].focus();}else if(e.key==='ArrowUp'){e.preventDefault();items[(i-1+n)%n].focus();}else if(e.key==='Home'){e.preventDefault();items[0].focus();}else if(e.key==='End'){e.preventDefault();items[n-1].focus();}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();ferme(true);}else if(e.key==='Tab'){ferme(false);}});Dc.addEventListener('click',function(e){var w=$i('langue');if(ouvert()&&w&&!w.contains(e.target))ferme(false);});Dc.addEventListener('keydown',function(e){if(e.key==='Escape'&&ouvert())ferme(true);});items.forEach(function(b){b.addEventListener('click',function(){var l=b.getAttribute('data-langue');if(l!==courante){applique(l);try{localStorage.setItem('upstarLangue',l);}catch(x){}Dc.cookie='upstar_langue='+l+';path=/;max-age=31536000;samesite=lax';}ferme(true);});});}var pref=null;try{pref=localStorage.getItem('upstarLangue');}catch(x){}if(!pref)Dc.cookie.split(';').forEach(function(c){c=c.trim();if(c.indexOf('upstar_langue=')===0)pref=c.slice(14);});if(pref==='en')applique('en');else majBouton('fr');}catch(e){console.warn(e);}})();
+    </script>
+
+    <style>
+      .btn-main{transition:transform .15s var(--out),opacity .2s,filter .2s}.btn-main:hover,.btn-main:focus-visible{filter:brightness(1.07) saturate(1.08)}.btn-main:disabled{filter:none}
+    </style>
+    <script>
+      (function(){try{var D=document,m=D.getElementById('maquette'),e=D.getElementById('m-etat'),b=D.getElementById('m-badge'),r=D.getElementById('m-reessayer'),i=D.getElementById('ig');if(!m||!e)return;var T={fr:{apercu_ig:'Aperçu de ton profil',vide_t:'Ton profil apparaîtra ici',vide_s:'Commence par saisir ton pseudo Instagram.',reessayer:'Réessayer'},en:{apercu_ig:'Your profile preview',vide_t:'Your profile will appear here',vide_s:'Start by typing your Instagram username.',reessayer:'Try again'}};var V=['Ton profil apparaîtra ici','Your profile will appear here'];function txt(){var l=D.documentElement.lang,t=T[l]||T.fr;Array.prototype.forEach.call(D.querySelectorAll('[data-ui]'),function(el){var k=el.getAttribute('data-ui');if(t[k])el.textContent=t[k];});}function sync(){var c=m.getAttribute('data-charge')==='oui',x=e.textContent.trim(),E=window.ETATS||{},s,k='';if(e.getAttribute('aria-busy')==='true')s='recherche';else if(c)s=(b&&!b.classList.contains('hidden'))?'trouve':'prive';else if(!x||x===E.vide||V.indexOf(x)>-1)s='vide';else{s='erreur';k=(x===E.indispo||/indisponible|unavailable|impossible/i.test(x))?'indispo':'introuvable';}if(m.getAttribute('data-etat')!==s)m.setAttribute('data-etat',s);if(m.getAttribute('data-err')!==k)m.setAttribute('data-err',k);}if(window.MutationObserver){var o=new MutationObserver(sync);o.observe(e,{childList:true,characterData:true,subtree:true,attributes:true,attributeFilter:['aria-busy']});o.observe(m,{attributes:true,attributeFilter:['data-charge']});if(b)o.observe(b,{attributes:true,attributeFilter:['class']});new MutationObserver(function(){txt();sync();}).observe(D.documentElement,{attributes:true,attributeFilter:['lang']});}if(r)r.addEventListener('click',function(){if(i)i.focus();if(m.getAttribute('data-err')==='indispo'&&i&&i.value)i.dispatchEvent(new Event('input',{bubbles:true}));});txt();sync();}catch(x){console.warn(x);}})();
+    </script>
+
+    <style>
+      #saisie,#saisie.err{box-shadow:0 4px 14px #f0426b1a}#saisie:focus-within{box-shadow:0 0 0 4px #f2436d26,0 4px 14px #f0426b1a}#saisie.err:focus-within{box-shadow:0 0 0 4px #f8717126,0 4px 14px #f0426b1a}
+      .btn-main::after{display:none}
+      #dlg-donnees section{scroll-margin-top:1.25rem}
+    </style>
+
+    <script>
+      (function(){try{var D=document,m=D.getElementById('maquette'),t=D.getElementById('btn-txt');if(!m||!t)return;function n(){for(var k=0;k<t.childNodes.length;k++){var x=t.childNodes[k];if(x.nodeType===3&&x.nodeValue.trim())return x;}return null;}function maj(){if(window.enCours)return;var x=n();if(!x)return;var en=D.documentElement.lang==='en';x.nodeValue=' '+(en?'Continue':'Continuer')+' ';}if(window.MutationObserver){new MutationObserver(maj).observe(D.documentElement,{attributes:true,attributeFilter:['lang']});new MutationObserver(maj).observe(t,{childList:true,characterData:true,subtree:true});}maj();if(window.ETATS){window.ETATS.trouve='Profil retrouvé. Vérifie que c’est bien toi, puis clique sur « Continuer ».';}}catch(e){console.warn(e);}})();
+    </script>
+  
+</body></html>

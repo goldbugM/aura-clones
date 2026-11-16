@@ -1,0 +1,1075 @@
+<html lang="en" class="scroll-smooth"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2032%2032'%3E%3Cdefs%3E%3ClinearGradient%20id%3D'g'%20x1%3D'0'%20y1%3D'1'%20x2%3D'1'%20y2%3D'0'%3E%3Cstop%20offset%3D'0'%20stop-color%3D'%23f43f5e'%2F%3E%3Cstop%20offset%3D'1'%20stop-color%3D'%23fb923c'%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cpath%20d%3D'M26.1%205.9Q15%2020%2019.1%2027.1Q12%2023%204.9%2027.1Q9%2020%204.9%2012.9Q12%2017%2026.1%205.9Z'%20fill%3D'url(%23g)'%2F%3E%3Ccircle%20cx%3D'2.4'%20cy%3D'29.6'%20r%3D'1.7'%20fill%3D'%23f43f5e'%20opacity%3D'0.75'%2F%3E%3C%2Fsvg%3E">
+<title>Stella Boost Media</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600&family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Typography overrides */
+body { font-family: 'Inter', sans-serif; }
+.font-serif { font-family: 'Instrument Serif', serif; }
+.font-montserrat { font-family: 'Montserrat', sans-serif; }
+/* Animations */
+@keyframes fadeUp {
+from { opacity: 0; transform: translateY(20px); }
+to { opacity: 1; transform: translateY(0); }
+}
+@keyframes infinite-scroll {
+from { transform: translateX(0); }
+to { transform: translateX(-50%); }
+}
+.animate-fade-up {
+animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+opacity: 0;
+}
+.animate-infinite-scroll {
+animation: infinite-scroll 40s linear infinite;
+}
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+.delay-300 { animation-delay: 0.3s; }
+.delay-500 { animation-delay: 0.5s; }
+/* Utilities */
+.glass {
+background: rgba(255, 255, 255, 0.8);
+backdrop-filter: blur(12px);
+-webkit-backdrop-filter: blur(12px);
+}
+.marquee-mask {
+mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+-webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+}
+/* Custom FAQ Details Marker removal */
+details > summary {
+list-style: none;
+}
+details > summary::-webkit-details-marker {
+display: none;
+}
+</style>
+<link id="all-fonts-link-font-geist" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-geist">
+.font-geist { font-family: 'Geist', sans-serif !important; }
+</style><link id="all-fonts-link-font-roboto" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-roboto">
+.font-roboto { font-family: 'Roboto', sans-serif !important; }
+</style><link id="all-fonts-link-font-montserrat" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-montserrat">
+.font-montserrat { font-family: 'Montserrat', sans-serif !important; }
+</style><link id="all-fonts-link-font-poppins" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-poppins">
+.font-poppins { font-family: 'Poppins', sans-serif !important; }
+</style><link id="all-fonts-link-font-playfair" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;900&display=swap"><style id="all-fonts-style-font-playfair">
+.font-playfair { font-family: 'Playfair Display', serif !important; }
+</style><link id="all-fonts-link-font-instrument-serif" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:wght@400;500;600;700&display=swap"><style id="all-fonts-style-font-instrument-serif">
+.font-instrument-serif { font-family: 'Instrument Serif', serif !important; }
+</style><link id="all-fonts-link-font-merriweather" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700;900&display=swap"><style id="all-fonts-style-font-merriweather">
+.font-merriweather { font-family: 'Merriweather', serif !important; }
+</style><link id="all-fonts-link-font-bricolage" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-bricolage">
+.font-bricolage { font-family: 'Bricolage Grotesque', sans-serif !important; }
+</style><link id="all-fonts-link-font-jakarta" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap"><style id="all-fonts-style-font-jakarta">
+.font-jakarta { font-family: 'Plus Jakarta Sans', sans-serif !important; }
+</style><link id="all-fonts-link-font-manrope" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap"><style id="all-fonts-style-font-manrope">
+.font-manrope { font-family: 'Manrope', sans-serif !important; }
+</style><link id="all-fonts-link-font-space-grotesk" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-space-grotesk">
+.font-space-grotesk { font-family: 'Space Grotesk', sans-serif !important; }
+</style><link id="all-fonts-link-font-work-sans" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@300;400;500;600;700;800&display=swap"><style id="all-fonts-style-font-work-sans">
+.font-work-sans { font-family: 'Work Sans', sans-serif !important; }
+</style><link id="all-fonts-link-font-pt-serif" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&display=swap"><style id="all-fonts-style-font-pt-serif">
+.font-pt-serif { font-family: 'PT Serif', serif !important; }
+</style><link id="all-fonts-link-font-geist-mono" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-geist-mono">
+.font-geist-mono { font-family: 'Geist Mono', monospace !important; }
+</style><link id="all-fonts-link-font-space-mono" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap"><style id="all-fonts-style-font-space-mono">
+.font-space-mono { font-family: 'Space Mono', monospace !important; }
+</style><link id="all-fonts-link-font-quicksand" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-quicksand">
+.font-quicksand { font-family: 'Quicksand', sans-serif !important; }
+</style><link id="all-fonts-link-font-nunito" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;500;600;700;800&display=swap"><style id="all-fonts-style-font-nunito">
+.font-nunito { font-family: 'Nunito', sans-serif !important; }
+</style><link id="all-fonts-link-font-newsreader" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400..800&display=swap"><style id="all-fonts-style-font-newsreader">
+.font-newsreader { font-family: 'Newsreader', serif !important; }
+</style><link id="all-fonts-link-font-google-sans-flex" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400;500;600;700&display=swap"><style id="all-fonts-style-font-google-sans-flex">
+.font-google-sans-flex { font-family: 'Google Sans Flex', sans-serif !important; }
+</style><link id="all-fonts-link-font-oswald" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-oswald">
+.font-oswald { font-family: 'Oswald', sans-serif !important; }
+</style><link id="all-fonts-link-font-dm-sans" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-dm-sans">
+.font-dm-sans { font-family: 'DM Sans', sans-serif !important; }
+</style><link id="all-fonts-link-font-cormorant" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&display=swap"><style id="all-fonts-style-font-cormorant">
+.font-cormorant { font-family: 'Cormorant Garamond', serif !important; }
+</style><style id="border-gradient-shared-style">
+[style*="--border-gradient"]::before {
+content: "";
+position: absolute;
+inset: 0;
+padding: 1px;
+border-radius: var(--border-radius-before, inherit);
+-webkit-mask: linear-gradient(#fff 0 0) content-box,
+linear-gradient(#fff 0 0);
+-webkit-mask-composite: xor;
+mask-composite: exclude;
+background: var(--border-gradient);
+pointer-events: none;
+}</style>  <script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+  <body class="antialiased selection:bg-rose-100 selection:text-rose-900 text-gray-600 bg-[#FAFAFA]">
+    <!-- 1. Navigation Bar -->
+    <header class="fixed top-0 left-0 right-0 z-50 flex justify-center pt-4 px-4 md:pt-6 md:px-6 pointer-events-none">
+      <nav class="glass flex md:gap-10 transition-all duration-300 w-full max-w-5xl pointer-events-auto border-gray-200/60 border rounded-full pt-2 pr-2 pb-2 pl-5 shadow-[0_2px_10px_-2px_rgba(0,0,0,0.05)] gap-x-4 gap-y-4 items-center justify-between">
+        <!-- Left: Logo -->
+        <a href="#" class="group flex items-center gap-2 shrink-0">
+          <svg class="w-8 h-8 md:w-9 md:h-9 shrink-0 transition-transform duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" viewBox="0 0 32 32" aria-hidden="true" stroke-width="2" data-icon-replaced="true" style="color: rgb(75, 85, 99); width: 32px; height: 32px"><defs><linearGradient id="sbm-grad" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#f43f5e"></stop><stop offset="1" stop-color="#fb923c"></stop></linearGradient></defs><path d="M26.1 5.9Q15 20 19.1 27.1Q12 23 4.9 27.1Q9 20 4.9 12.9Q12 17 26.1 5.9Z" fill="url(#sbm-grad)" class=""></path><circle cx="2.4" cy="29.6" r="1.7" fill="#f43f5e" opacity="0.75"></circle></svg>
+          <span class="font-serif text-xl md:text-2xl tracking-tight italic font-medium group-hover:text-rose-600 transition-colors text-gray-900">Stella Boost Media
+</span>
+        </a>
+
+        <!-- Right: Single CTA -->
+        <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="text-xs px-4 py-2 md:px-5 md:py-2.5 rounded-full transition-all duration-300 flex items-center gap-2 font-montserrat font-medium group shadow-md hover:shadow-lg hover:shadow-rose-500/20 bg-gray-900 text-white hover:bg-rose-600 shrink-0">
+          Get Started
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="arrow-right" aria-hidden="true" class="lucide lucide-arrow-right w-3 h-3 transition-transform group-hover:translate-x-0.5 hidden sm:block"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+        </a>
+      </nav>
+    </header>
+
+    <main class="max-w-7xl mx-auto pt-28 md:pt-32 px-4 md:px-6 pb-24">
+      <!-- 2. Hero Section -->
+      <section class="md:rounded-[2.5rem] md:p-12 lg:p-20 overflow-hidden md:mb-16 text-center bg-white border-gray-200/60 border rounded-[2rem] mb-12 pt-12 pr-6 pb-12 pl-6 relative shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        <!-- Background Grid -->
+        <div class="absolute inset-0 bg-[linear-gradient(to_right,#f0f0f0_1px,transparent_1px),linear-gradient(to_bottom,#f0f0f0_1px,transparent_1px)] bg-[size:3rem_3rem] md:bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none opacity-50"></div>
+
+        <div class="relative z-10 max-w-5xl mx-auto flex flex-col items-center">
+          <!-- Eyebrow -->
+          <div class="animate-fade-up w-fit border px-3 py-1 rounded-full text-[10px] tracking-widest uppercase font-montserrat font-bold mb-6 md:mb-8 bg-rose-50 border-rose-100 text-rose-600">Attention B2B Service Business Owners</div>
+
+          <!-- Main Headline -->
+          <h1 class="animate-fade-up delay-100 text-4xl sm:text-5xl md:text-7xl lg:text-[5rem] leading-[1.1] md:leading-[0.95] tracking-tighter mb-6 md:mb-8 font-serif font-medium text-gray-900"><span class="text-transparent bg-clip-text bg-gradient-to-r from-rose-500 italic pr-2 to-orange-400">10-20 Qualified Sales Meetings on Your Calendar</span> <br class="hidden md:block"> or <span class="border-b-2 md:border-b-4 border-rose-200/60">
+              You Don't Pay.
+            </span></h1>
+
+          <!-- Subheadline -->
+          <p class="animate-fade-up delay-200 text-base md:text-xl text-gray-500 leading-relaxed max-w-2xl mb-8 md:mb-12 font-light px-2">Our proprietary "Pipeline Growth System" adds a predictable flow of qualified appointments to your business
+      without you lifting a finger.</p>
+
+          <!-- Video Box -->
+          <div class="animate-fade-up delay-300 relative w-full max-w-4xl aspect-video rounded-xl md:rounded-[2rem] border-2 md:border-4 shadow-xl md:shadow-2xl overflow-hidden mb-8 md:mb-12 group cursor-pointer ring-1 bg-gray-900 border-white/50 shadow-gray-200 ring-gray-900/5">
+  
+<iframe src="https://fast.wistia.net/embed/iframe/0vvqofgpd8?videoFoam=true" allowtransparency="true" frameborder="0" scrolling="no" class="wistia_embed" name="wistia_embed" allowfullscreen="" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;">
+  </iframe></div>
+
+          <!-- Hero Stats -->
+          <div class="animate-fade-up delay-400 w-full max-w-4xl grid grid-cols-2 md:grid-cols-4 gap-y-6 md:gap-x-6 py-6 md:py-8 mb-8 md:mb-12 border-y border-gray-200">
+            <div class="text-center px-2">
+              <div class="text-3xl md:text-5xl font-serif font-medium tracking-tight"><span class="inline-block text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400 italic pr-1">10-20</span></div>
+              <div class="mt-1 md:mt-2 text-[11px] md:text-sm text-gray-500 font-montserrat">Qualified meetings per month</div>
+            </div>
+            <div class="text-center px-2">
+              <div class="text-3xl md:text-5xl font-serif font-medium tracking-tight"><span class="inline-block text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400 italic pr-1">100%</span></div>
+              <div class="mt-1 md:mt-2 text-[11px] md:text-sm text-gray-500 font-montserrat">Replies handled for you</div>
+            </div>
+            <div class="text-center px-2">
+              <div class="text-3xl md:text-5xl font-serif font-medium tracking-tight"><span class="inline-block text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400 italic pr-1">40+</span></div>
+              <div class="mt-1 md:mt-2 text-[11px] md:text-sm text-gray-500 font-montserrat">Inboxes set up on your behalf</div>
+            </div>
+            <div class="text-center px-2">
+              <div class="text-3xl md:text-5xl font-serif font-medium tracking-tight"><span class="inline-block text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400 italic pr-1">$0</span></div>
+              <div class="mt-1 md:mt-2 text-[11px] md:text-sm text-gray-500 font-montserrat">For calls that don't show</div>
+            </div>
+          </div>
+
+          <!-- Dual CTA Group -->
+          <div class="animate-fade-up delay-500 flex flex-col sm:flex-row gap-3 md:gap-4 w-full mb-6 gap-x-3 gap-y-3 items-center justify-center">
+            <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="w-full sm:w-auto px-8 py-3.5 md:py-4 rounded-full text-sm hover:shadow-xl hover:shadow-rose-500/20 transition-all duration-300 flex items-center justify-center gap-2 font-montserrat font-medium group bg-gray-900 text-white hover:bg-rose-600">
+              Get Started
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="arrow-right" aria-hidden="true" class="lucide lucide-arrow-right w-4 h-4 transition-transform group-hover:translate-x-1"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+            </a>
+            <a href="#how-it-works" class="w-full sm:w-auto border px-8 py-3.5 md:py-4 rounded-full text-sm transition-all duration-300 font-montserrat font-medium flex items-center justify-center gap-2 bg-white border-gray-200 text-gray-900 hover:border-gray-400">
+              Learn More
+            </a>
+          </div>
+
+          <!-- Context Statement -->
+          <p class="animate-fade-up delay-500 text-[10px] md:text-xs font-montserrat text-gray-400">
+            Book a Free Strategy Session. No credit card required.
+          </p>
+        </div>
+      </section>
+
+      <!-- 3. Social Proof (Trust Bar) -->
+      
+
+      <!-- 4. Pain Points Section -->
+      <section class="py-12 md:py-20 max-w-6xl mx-auto">
+        <h2 class="text-3xl md:text-5xl text-center mb-10 md:mb-16 tracking-tight font-serif font-medium text-gray-900 px-4">
+          Are You Currently Struggling With...
+        </h2>
+        <div class="grid md:grid-cols-3 gap-6 md:gap-8">
+          <!-- Card 1 -->
+          <div class="md:p-8 md:rounded-3xl hover:shadow-lg transition-all duration-300 bg-gradient-to-br from-red-50 to-white rounded-[1.5rem] pt-6 pr-6 pb-6 pl-6 shadow-sm" style="position: relative; --border-gradient: linear-gradient(135deg, #fca5a5, #ef4444); --border-radius-before: 1.5rem">
+            <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center mb-5 md:mb-6 bg-rose-50 text-rose-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="trending-down" aria-hidden="true" class="lucide lucide-trending-down w-5 h-5 md:w-6 md:h-6"><path d="M16 17h6v-6"></path><path d="m22 17-8.5-8.5-5 5L2 7"></path></svg>
+            </div>
+            <h3 class="text-lg md:text-xl font-montserrat font-semibold mb-2 md:mb-3 text-gray-900">
+              Pipeline unpredictability
+            </h3>
+            <p class="text-gray-500 font-light leading-relaxed text-sm">
+              You never know where your next client is coming from, creating
+            revenue rollercoasters that stall growth.
+            </p>
+          </div>
+          <!-- Card 2 -->
+          <div class="md:p-8 md:rounded-3xl hover:shadow-lg transition-all duration-300 bg-gradient-to-br from-red-50 to-white rounded-[1.5rem] pt-6 pr-6 pb-6 pl-6 shadow-sm" style="position: relative; --border-gradient: linear-gradient(135deg, #fca5a5, #ef4444); --border-radius-before: 1.5rem">
+            <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center mb-5 md:mb-6 bg-rose-50 text-rose-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="users" aria-hidden="true" class="lucide lucide-users w-5 h-5 md:w-6 md:h-6"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><path d="M16 3.128a4 4 0 0 1 0 7.744"></path><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><circle cx="9" cy="7" r="4"></circle></svg>
+            </div>
+            <h3 class="text-lg md:text-xl font-montserrat font-semibold mb-2 md:mb-3 text-gray-900">
+              Referral dependency
+            </h3>
+            <p class="text-gray-500 font-light leading-relaxed text-sm">
+              Almost all of your new business comes from word of mouth you can't control, can't predict, and can't scale, no matter how hard you work.
+            </p>
+          </div>
+          <!-- Card 3 -->
+          <div class="md:p-8 md:rounded-3xl hover:shadow-lg transition-all duration-300 bg-gradient-to-br from-red-50 to-white rounded-[1.5rem] pt-6 pr-6 pb-6 pl-6 shadow-sm" style="position: relative; --border-gradient: linear-gradient(135deg, #fca5a5, #ef4444); --border-radius-before: 1.5rem">
+            <div class="w-10 h-10 md:w-12 md:h-12 rounded-xl flex items-center justify-center mb-5 md:mb-6 bg-rose-50 text-rose-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="clock" aria-hidden="true" class="lucide lucide-clock w-5 h-5 md:w-6 md:h-6"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+            </div>
+            <h3 class="text-lg md:text-xl font-montserrat font-semibold mb-2 md:mb-3 text-gray-900">
+              No System for Finding New Clients
+            </h3>
+            <p class="text-gray-500 font-light leading-relaxed text-sm">
+              You know you should be doing outbound marketing but between running the business, managing the work, and everything else, there is simply no time to build it yourself.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. Benefits / Why Us -->
+      <section class="py-12 md:py-20" id="how-it-works">
+<div class="text-center max-w-3xl mx-auto mb-10 md:mb-14">
+  <span class="text-xs font-montserrat uppercase tracking-widest text-rose-600">How It Works</span>
+  <h2 class="md:text-5xl text-3xl font-medium text-gray-900 tracking-tight font-serif mb-4 mt-3">From first email to booked call.</h2>
+  <p class="text-gray-500 text-base md:text-lg mt-4">Five steps, fully managed. Here's what happens behind the scenes while you run your business.</p>
+</div>
+<div class="max-w-3xl mx-auto relative">
+  <div class="absolute left-5 md:left-6 top-2 bottom-2 w-px bg-gradient-to-b from-rose-300 via-rose-200 to-transparent" aria-hidden="true"></div>
+  <ol class="relative">
+  <li class="relative pl-14 md:pl-20 pb-10 md:pb-12 last:pb-0">
+    <span class="absolute left-0 top-0 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full bg-white border-2 border-rose-500 text-rose-600 font-serif text-lg md:text-xl">1</span>
+    <div class="rounded-2xl bg-white border border-gray-200/70 shadow-sm px-6 md:px-8 py-5 md:py-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-6 mb-2">
+        <h3 class="text-lg md:text-xl font-medium text-gray-900">Find the right buyers</h3>
+        <span class="inline-flex w-fit items-center gap-1.5 rounded-full bg-rose-50 text-rose-700 text-[11px] md:text-xs font-montserrat px-3 py-1 whitespace-nowrap">Your part: A 30-minute kickoff call</span>
+      </div>
+      <p class="text-gray-500 text-sm md:text-base leading-relaxed">We map out your ideal client by title, industry, location and company size, then build a fresh lead list around it. Every contact is verified before a single email goes out.</p>
+    </div>
+  </li>
+  <li class="relative pl-14 md:pl-20 pb-10 md:pb-12 last:pb-0">
+    <span class="absolute left-0 top-0 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full bg-white border-2 border-rose-500 text-rose-600 font-serif text-lg md:text-xl">2</span>
+    <div class="rounded-2xl bg-white border border-gray-200/70 shadow-sm px-6 md:px-8 py-5 md:py-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-6 mb-2">
+        <h3 class="text-lg md:text-xl font-medium text-gray-900">Build a separate sending system</h3>
+        <span class="inline-flex w-fit items-center gap-1.5 rounded-full bg-rose-50 text-rose-700 text-[11px] md:text-xs font-montserrat px-3 py-1 whitespace-nowrap">Your part: Nothing</span>
+      </div>
+      <p class="text-gray-500 text-sm md:text-base leading-relaxed">We set up new domains and inboxes just for outreach, fully authenticated and warmed up for 2–3 weeks. Each inbox sends only 20–25 emails a day, so it looks like a real person. Your main email domain is never touched.</p>
+    </div>
+  </li>
+  <li class="relative pl-14 md:pl-20 pb-10 md:pb-12 last:pb-0">
+    <span class="absolute left-0 top-0 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full bg-white border-2 border-rose-500 text-rose-600 font-serif text-lg md:text-xl">3</span>
+    <div class="rounded-2xl bg-white border border-gray-200/70 shadow-sm px-6 md:px-8 py-5 md:py-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-6 mb-2">
+        <h3 class="text-lg md:text-xl font-medium text-gray-900">Write emails that sound human</h3>
+        <span class="inline-flex w-fit items-center gap-1.5 rounded-full bg-rose-50 text-rose-700 text-[11px] md:text-xs font-montserrat px-3 py-1 whitespace-nowrap">Your part: Approve the messaging</span>
+      </div>
+      <p class="text-gray-500 text-sm md:text-base leading-relaxed">Short, researched messages written for each prospect, not a blast. We test several angles at once to find what your market actually responds to.</p>
+    </div>
+  </li>
+  <li class="relative pl-14 md:pl-20 pb-10 md:pb-12 last:pb-0">
+    <span class="absolute left-0 top-0 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full bg-white border-2 border-rose-500 text-rose-600 font-serif text-lg md:text-xl">4</span>
+    <div class="rounded-2xl bg-white border border-gray-200/70 shadow-sm px-6 md:px-8 py-5 md:py-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-6 mb-2">
+        <h3 class="text-lg md:text-xl font-medium text-gray-900">Handle every reply</h3>
+        <span class="inline-flex w-fit items-center gap-1.5 rounded-full bg-rose-50 text-rose-700 text-[11px] md:text-xs font-montserrat px-3 py-1 whitespace-nowrap">Your part: Show up to the calls</span>
+      </div>
+      <p class="text-gray-500 text-sm md:text-base leading-relaxed">Our team answers every response, screens out bad fits, and books qualified prospects straight onto your calendar.</p>
+    </div>
+  </li>
+  <li class="relative pl-14 md:pl-20 pb-10 md:pb-12 last:pb-0">
+    <span class="absolute left-0 top-0 flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full bg-white border-2 border-rose-500 text-rose-600 font-serif text-lg md:text-xl">5</span>
+    <div class="rounded-2xl bg-white border border-gray-200/70 shadow-sm px-6 md:px-8 py-5 md:py-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-6 mb-2">
+        <h3 class="text-lg md:text-xl font-medium text-gray-900">Report, improve, repeat</h3>
+        <span class="inline-flex w-fit items-center gap-1.5 rounded-full bg-rose-50 text-rose-700 text-[11px] md:text-xs font-montserrat px-3 py-1 whitespace-nowrap">Your part: Read the update</span>
+      </div>
+      <p class="text-gray-500 text-sm md:text-base leading-relaxed">You get a clear update every Monday and Friday: emails sent, replies, and calls booked. We cut what isn't working and double down on what is.</p>
+    </div>
+  </li></ol>
+</div>
+<div class="flex justify-center mt-10 md:mt-12">
+  <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="w-full sm:w-auto justify-center px-10 py-4 rounded-full text-sm transition-all duration-300 font-montserrat font-medium flex items-center gap-2 shadow-lg hover:shadow-xl hover:shadow-rose-500/20 bg-gray-900 text-white hover:bg-rose-600">Start With a Strategy Call <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="arrow-right" aria-hidden="true" class="lucide lucide-arrow-right w-4 h-4"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></a>
+</div></section><section class="py-12 md:py-20" id="difference">
+<div class="text-center max-w-3xl mx-auto mb-10 md:mb-14">
+  <h2 class="md:text-5xl text-3xl font-medium text-gray-900 tracking-tight font-serif mb-4">Same inbox. <span class="italic pr-2 text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400">Very different email.</span></h2>
+  <p class="text-gray-500 text-base md:text-lg mt-4">Your prospects get dozens of cold emails a week. Here's why ours get read instead of deleted.</p>
+</div>
+<div class="grid md:grid-cols-2 gap-6 md:gap-8 max-w-5xl mx-auto">
+  <div class="rounded-[2rem] border border-gray-200 bg-white overflow-hidden flex flex-col">
+    <div class="flex items-center gap-2 px-6 py-4 border-b border-gray-100 bg-gray-50">
+      <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+      <span class="text-[11px] tracking-widest uppercase font-montserrat text-gray-500">The Mass Blast</span>
+    </div>
+    <div class="px-6 md:px-8 py-6 font-mono text-[13px] md:text-sm leading-relaxed text-gray-500 space-y-4 flex-1">
+      <p class="">Subject: Partnership opportunity</p>
+      <p>Hello {{first_name}},</p>
+      <p class="">I hope this email finds you well. My name is Mike and I run a full-service marketing agency that helps businesses like {{company}} grow.</p>
+      <p class="">We offer SEO, ads, social media, and lead generation. Our clients see amazing results!</p>
+      <p class="">Can we hop on a 30 minute call this week to discuss how we can help you?</p>
+      <p>Thanks,<br>Mike</p>
+    </div>
+    <div class="px-6 py-4 border-t border-gray-100 text-sm text-gray-500">✕  Could be sent to anyone. Gets ignored.</div>
+  </div>
+  <div class="rounded-[2rem] border border-rose-200 bg-white overflow-hidden flex flex-col shadow-sm">
+    <div class="flex items-center gap-2 px-6 py-4 border-b border-rose-100 bg-rose-50/60">
+      <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+      <span class="text-[11px] tracking-widest uppercase font-montserrat text-rose-600">The Stella Boost Way</span>
+    </div>
+    <div class="px-6 md:px-8 py-6 text-sm md:text-[15px] leading-relaxed text-gray-800 space-y-4 flex-1">
+      <p class=""><span class="text-gray-400">Subject:</span> <span class="bg-rose-50 text-rose-700 rounded px-1">property managers in Tampa</span></p>
+      <p class="">Hey <span class="bg-rose-50 text-rose-700 rounded px-1">Carlos</span>,</p>
+      <p class="">Saw <span class="bg-rose-50 text-rose-700 rounded px-1">Gulfline Roofing</span> does a lot of <span class="bg-rose-50 text-rose-700 rounded px-1">commercial reroofs around Tampa</span>. With <span class="bg-rose-50 text-rose-700 rounded px-1">hurricane season</span> just behind us, property managers are finding leaks they didn't budget for, and most won't call a roofer until it's urgent.</p>
+      <p class="">We reach out to those managers for you and book the ones with real projects straight onto your calendar.</p>
+      <p class="">Open to learning more?</p>
+      <p class="">Joseph</p>
+    </div>
+    <div class="px-6 py-4 border-t border-rose-100 text-sm text-rose-600">✓  Written for one person. Starts a real conversation.</div>
+  </div>
+</div>
+<div class="grid sm:grid-cols-3 gap-4 max-w-5xl mx-auto mt-8 md:mt-10 text-center">
+  <div class="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-5"><p class="font-medium text-gray-900">Researched, not guessed</p><p class="text-sm text-gray-500 mt-1">Every line references something real about the prospect.</p></div>
+  <div class="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-5"><p class="font-medium text-gray-900">Short and plain</p><p class="text-sm text-gray-500 mt-1">Reads like a note from a person, not a brochure.</p></div>
+  <div class="rounded-2xl bg-gray-50 border border-gray-100 px-5 py-5"><p class="font-medium text-gray-900">One easy question</p><p class="text-sm text-gray-500 mt-1">A low-pressure ask that's simple to reply to.</p></div>
+</div>
+<div class="flex justify-center mt-10 md:mt-12">
+  <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="w-full sm:w-auto justify-center px-10 py-4 rounded-full text-sm transition-all duration-300 font-montserrat font-medium flex items-center gap-2 shadow-lg hover:shadow-xl hover:shadow-rose-500/20 bg-gray-900 text-white hover:bg-rose-600">See It For Your Market <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="arrow-right" aria-hidden="true" class="lucide lucide-arrow-right w-4 h-4"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></a>
+</div></section>
+
+      <!-- 6. Featured Testimonial -->
+      
+
+      <!-- 7. Transformation / Process -->
+      
+
+      <!-- Video Deep Dive -->
+      
+
+      <!-- 8. Offer / What's Included -->
+      <section class="py-16 md:py-20 -mx-4 md:-mx-6 px-4 md:px-6 rounded-[2.5rem] md:rounded-[3rem] bg-gray-50">
+        <div class="max-w-7xl mx-auto">
+          <h2 class="text-3xl md:text-5xl text-center mb-10 md:mb-16 tracking-tight font-serif font-medium text-gray-900">
+            What's Included
+          </h2>
+
+          <div class="rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-16 border shadow-sm relative overflow-hidden bg-white border-gray-200">
+            <div class="absolute top-0 right-0 w-[20rem] h-[20rem] md:w-[40rem] md:h-[40rem] bg-gradient-to-b to-transparent rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none from-rose-50/50"></div>
+            <div class="relative z-10 flex flex-col items-center">
+              <div class="text-center mb-8 md:mb-12 max-w-3xl">
+                <span class="font-bold tracking-widest uppercase text-[10px] md:text-xs font-montserrat mb-4 block text-rose-600">
+                  The System
+                </span>
+                <h3 class="text-2xl md:text-4xl font-serif mb-4 md:mb-6 text-gray-900">
+                  Done-For-You Outbound Pipeline System
+                </h3>
+                <p class="text-gray-500 font-light text-base md:text-lg">
+                  We've consolidated every component of a high performing outbound system into one fully managed partnership, built, launched, and operated entirely for you.
+                </p>
+              </div>
+              <div class="grid md:grid-cols-2 gap-y-4 gap-x-20 md:gap-y-6 w-full max-w-4xl mb-12 md:mb-16">
+                <ul class="space-y-4 md:space-y-6">
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Sending Domains Registered and Configured
+                    </span>
+                  </li>
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Dedicated, Warmed-Up Inboxes Separate From Your Main Email
+                    </span>
+                  </li>
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Verified Lead Lists Built For Your Market
+                    </span>
+                  </li>
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Email Sequences Written and Split-Tested
+                    </span>
+                  </li>
+                </ul>
+                <ul class="space-y-4 md:space-y-6">
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Monday and Friday Performance Updates
+                    </span>
+                  </li>
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Every Reply Managed and Qualified For You
+                    </span>
+                  </li>
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-medium font-montserrat text-sm md:text-lg text-gray-700">
+                      Appointments Booked Directly Onto Your Calendar
+                    </span>
+                  </li>
+                  <li class="flex items-center gap-3 md:gap-4">
+                    <div class="w-6 h-6 md:w-8 md:h-8 rounded-full flex items-center justify-center shrink-0 bg-rose-50 text-rose-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="check" aria-hidden="true" class="lucide lucide-check w-3.5 h-3.5 md:w-5 md:h-5"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </div>
+                    <span class="font-bold font-montserrat text-sm md:text-lg border-b-2 text-gray-900 border-rose-200">
+                      Performance-Based: You Only Pay For Qualified Calls That Show Up
+                    </span>
+                  </li>
+                </ul>
+              </div>
+              <div class="flex flex-col items-center w-full">
+                <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="w-full md:w-auto text-base md:text-lg px-8 md:px-12 py-4 md:py-5 rounded-full transition-all duration-300 shadow-xl font-montserrat font-medium flex items-center justify-center gap-3 group bg-gray-900 text-white hover:bg-rose-600 shadow-rose-900/10">
+                  Secure Your Growth Partner
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="arrow-right" aria-hidden="true" class="lucide lucide-arrow-right w-4 h-4 md:w-5 md:h-5 transition-transform group-hover:translate-x-1"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+                </a>
+                <p class="mt-4 md:mt-6 text-xs md:text-sm font-montserrat text-gray-400">
+                  No long-term contracts. Cancel anytime.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 9. Full Testimonial Grid -->
+      
+
+      <!-- 10. About Me Section -->
+      <section class="py-16 md:py-24 grid lg:grid-cols-2 gap-10 md:gap-16 items-center border-t border-gray-100">
+        <div class="order-2 lg:order-1">
+          <h2 class="text-3xl md:text-5xl mb-6 md:mb-8 tracking-tight font-serif font-medium text-gray-900">
+            Hi, I'm Joseph Mendez.
+          </h2>
+          <div class="space-y-4 md:space-y-6 text-sm md:text-base text-gray-500 font-light leading-relaxed">
+            <p>
+              I founded
+              <span class="font-medium text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400">Stella Boost Media</span>
+              with one mission: to give high ticket service businesses a pipeline they can actually control.
+            </p>
+            <p class="">
+              My background is in B2B sales and outreach, setting qualified appointments daily, running full-cycle high ticket sales calls, and learning firsthand what actually makes prospects respond and show up. What I kept seeing was the same problem everywhere. Great service businesses with no systematic way to find new clients, stuck waiting on referrals, riding the feast and famine cycle, and unable to grow on their own terms. I built this system to fix that.
+            </p>
+          </div>
+          <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="mt-6 md:mt-8 font-semibold border-b pb-0.5 transition-all text-rose-600 border-rose-200 hover:border-rose-600 inline-block">Let's Talk!</a>
+        </div>
+        <div class="relative order-1 lg:order-2 h-64 md:h-[500px] w-full rounded-[2rem] overflow-hidden bg-gray-100">
+          <img src="media/founder.jpg" alt="Founder" class="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-700">
+        </div>
+      </section>
+
+      <!-- 11. Final CTA (Lead Magnet) -->
+      
+
+      <!-- 12. FAQ Section -->
+      <section class="max-w-3xl mx-auto py-8 md:py-10 mb-16 md:mb-24 px-2 md:px-6">
+        <h2 class="text-2xl md:text-3xl text-center mb-10 md:mb-12 tracking-tight font-serif font-medium text-gray-900"><span class="italic pr-1 text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400">FAQs</span> - Everything you need to know.</h2>
+
+        <div class="space-y-4">
+          <!-- FAQ 1 -->
+          <details class="group border rounded-2xl overflow-hidden transition-all duration-300 open:shadow-md bg-white border-gray-200">
+            <summary class="flex justify-between items-center p-5 md:p-6 cursor-pointer font-medium font-montserrat select-none text-gray-900 text-sm md:text-base">
+              How fast can we expect results?
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="chevron-down" aria-hidden="true" class="lucide lucide-chevron-down w-4 h-4 md:w-5 md:h-5 transition-transform group-open:rotate-180 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+            </summary>
+            <div class="px-5 md:px-6 pb-6 text-sm text-gray-500 leading-relaxed font-light border-t pt-4 border-gray-100">
+              Most clients can expect to see their first replies and booked appointments within 3 to 5 weeks of launch, after the infrastructure is built, warmed up, and the first campaign goes live. Month two is typically when volume and consistency builds significantly, and by month three the system is fully optimized and generating predictable appointment flow.
+            </div>
+          </details>
+
+          <!-- FAQ 2 -->
+          <details class="group border rounded-2xl overflow-hidden transition-all duration-300 open:shadow-md bg-white border-gray-200">
+            <summary class="flex justify-between items-center p-5 md:p-6 cursor-pointer font-medium font-montserrat select-none text-gray-900 text-sm md:text-base">
+              Do you work with any industry?
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="chevron-down" aria-hidden="true" class="lucide lucide-chevron-down w-4 h-4 md:w-5 md:h-5 transition-transform group-open:rotate-180 text-gray-400" data-icon-replaced="true" style="color: rgb(156, 163, 175); width: 16px; height: 16px"><path d="m6 9 6 6 6-6"></path></svg>
+            </summary>
+            <div class="px-5 md:px-6 pb-6 text-sm text-gray-500 leading-relaxed font-light border-t pt-4 border-gray-100">
+              We work exclusively with B2B businesses selling high ticket services worth $10,000 or more, including commercial contractors, medical practices, specialty service providers, and similar businesses where the buyer is a professional decision maker. If your business fits that profile we will let you know on the strategy call whether we can take you on.
+            </div>
+          </details>
+
+          <!-- FAQ 3 -->
+          <details class="group border rounded-2xl overflow-hidden transition-all duration-300 open:shadow-md bg-white border-gray-200">
+            <summary class="flex justify-between items-center p-5 md:p-6 cursor-pointer font-medium font-montserrat select-none text-gray-900 text-sm md:text-base">
+              What is the guarantee exactly?
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="chevron-down" aria-hidden="true" class="lucide lucide-chevron-down w-4 h-4 md:w-5 md:h-5 transition-transform group-open:rotate-180 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+            </summary>
+            <div class="px-5 md:px-6 pb-6 text-sm text-gray-500 leading-relaxed font-light border-t pt-4 border-gray-100">
+              Our model is built around performance. You pay a flat monthly fee to cover the hard costs of running the system, and beyond that you only pay per appointment that actually shows up to the call. No shows cost you nothing. Unqualified leads never hit your calendar. The guarantee is built into the pricing structure itself, we only make meaningful money when you get results.
+            </div>
+          </details>
+
+          <!-- FAQ 4 -->
+          <details class="group border rounded-2xl overflow-hidden transition-all duration-300 open:shadow-md bg-white border-gray-200">
+            <summary class="flex justify-between items-center p-5 md:p-6 cursor-pointer font-medium font-montserrat select-none text-gray-900 text-sm md:text-base">
+              How much of my time is required?
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="chevron-down" aria-hidden="true" class="lucide lucide-chevron-down w-4 h-4 md:w-5 md:h-5 transition-transform group-open:rotate-180 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+            </summary>
+            <div class="px-5 md:px-6 pb-6 text-sm text-gray-500 leading-relaxed font-light border-t pt-4 border-gray-100">
+              Almost none. During onboarding we need about 30 to 60 minutes of your time to understand your ideal client, your target geography, and your offer. After that the entire system runs without you, we build it, manage it, handle every reply, qualify every lead, and book every call. Your only job is showing up to the appointments we put on your calendar.
+            </div>
+          </details>
+        </div>
+
+        <p class="text-center text-sm mt-8 text-gray-400">
+          Don't see what you're looking for?
+          <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" class="underline transition-all text-rose-600 decoration-rose-200 hover:decoration-rose-600">
+            Get in touch
+          </a>
+          .
+        </p>
+      </section>
+      <!-- 13. Book a Call Section -->
+      <section id="book-call" class="mx-auto py-16 md:py-24 px-4 md:px-6 max-w-7xl">
+        <div class="text-center mb-10 md:mb-16">
+          <h2 class="text-3xl md:text-5xl font-serif font-medium text-gray-900 mb-6 tracking-tight">
+            <span class="italic pr-2 text-transparent bg-clip-text bg-gradient-to-r from-rose-500 to-orange-400">Book a Call</span>
+          </h2>
+          <p class="text-base md:text-lg text-gray-500 font-light max-w-2xl mx-auto">
+            Book a no-commitment discovery call to discuss how we can help you
+      grow.
+          </p>
+        </div>
+        <div class="w-full bg-white rounded-[2rem] border border-gray-200 shadow-sm overflow-hidden"><div class="flex flex-col items-center text-center px-6 py-14 md:py-20">
+  <p class="text-gray-500 text-base md:text-lg max-w-xl mb-8">Pick a time that works for you. It's a quick 30-minute call to walk through how our outbound system works and see if it's a good fit for your business.</p>
+  <a href="https://cal.com/joseph-mendez-ymu18p/strategy-call?overlayCalendar=true" target="_blank" rel="noopener" class="w-full sm:w-auto justify-center px-10 py-4 rounded-full text-sm transition-all duration-300 font-montserrat font-medium flex items-center gap-2 shadow-lg hover:shadow-xl hover:shadow-rose-500/20 bg-gray-900 text-white hover:bg-rose-600">Pick a Time <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-lucide="arrow-right" aria-hidden="true" class="lucide lucide-arrow-right w-4 h-4"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg></a>
+  <p class="text-gray-400 text-xs md:text-sm mt-5">Free strategy session. No credit card required.</p>
+</div></div>
+      </section>
+    </main>
+
+    <!-- 13. Footer -->
+    
+
+    
+  
+<script>
+      lucide.createIcons();
+    </script></body></html>

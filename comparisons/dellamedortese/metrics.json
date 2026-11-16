@@ -1,0 +1,33 @@
+{
+ "slug": "dellamedortese",
+ "overall": 0.745,
+ "structure": 1.0,
+ "copy": 0.979,
+ "design": 0.3,
+ "motion": 0.028,
+ "media": 1.0,
+ "pixel": 0.996,
+ "text_similarity": 0.965,
+ "sections": [
+  3,
+  3
+ ],
+ "headings": [
+  2,
+  2
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  2,
+  2
+ ],
+ "heights": [
+  1988,
+  1988
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

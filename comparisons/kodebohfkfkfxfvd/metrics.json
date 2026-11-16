@@ -1,0 +1,33 @@
+{
+ "slug": "kodebohfkfkfxfvd",
+ "overall": 0.831,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.276,
+ "motion": 0.62,
+ "media": 1.0,
+ "pixel": 0.975,
+ "text_similarity": 1.0,
+ "sections": [
+  6,
+  6
+ ],
+ "headings": [
+  18,
+  18
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  7,
+  7
+ ],
+ "heights": [
+  5404,
+  5404
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

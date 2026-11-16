@@ -1,0 +1,33 @@
+{
+ "slug": "growth-agency-42",
+ "overall": 0.859,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.436,
+ "motion": 0.659,
+ "media": 1.0,
+ "pixel": 0.966,
+ "text_similarity": 1.0,
+ "sections": [
+  8,
+  8
+ ],
+ "headings": [
+  17,
+  17
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  1,
+  1
+ ],
+ "heights": [
+  7881,
+  7881
+ ],
+ "console_errors": 0,
+ "failed_requests": 2,
+ "shell_render_original": false,
+ "side_by_side": true
+}

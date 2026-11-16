@@ -1,0 +1,33 @@
+{
+ "slug": "marcus-thorne",
+ "overall": 0.831,
+ "structure": 1.0,
+ "copy": 0.999,
+ "design": 0.482,
+ "motion": 0.958,
+ "media": 0.53,
+ "pixel": 0.745,
+ "text_similarity": 0.999,
+ "sections": [
+  10,
+  10
+ ],
+ "headings": [
+  28,
+  28
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  22,
+  67
+ ],
+ "heights": [
+  14797,
+  14797
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

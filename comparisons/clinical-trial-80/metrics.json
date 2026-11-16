@@ -1,0 +1,33 @@
+{
+ "slug": "clinical-trial-80",
+ "overall": 0.791,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.16,
+ "motion": 0.447,
+ "media": 1.0,
+ "pixel": 0.999,
+ "text_similarity": 1.0,
+ "sections": [
+  9,
+  9
+ ],
+ "headings": [
+  28,
+  28
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  2,
+  2
+ ],
+ "heights": [
+  6717,
+  6717
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

@@ -1,0 +1,1367 @@
+<html lang="en-GB" class="scroll-smooth"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AMIGOS CARS & TRUCKS | HOUSTON TX 77076</title>
+<meta name="description" content="vehicles for sale in HOUSTON TX 77076">
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Icons -->
+<script src="https://cdn.jsdelivr.net/npm/iconify-icon@1.0.7/dist/iconify-icon.min.js"></script>
+<style>
+:root {
+--primary: #E51E21;
+--primary-dark: #c00a0d;
+}
+body {
+font-family: 'Inter', sans-serif;
+background-color: #FAFAFA;
+color: #171717;
+-webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, h5, h6, .font-heading {
+font-family: 'Plus Jakarta Sans', sans-serif;
+}
+/* Glassmorphism */
+.glass {
+background: rgba(255, 255, 255, 0.9);
+backdrop-filter: blur(12px);
+-webkit-backdrop-filter: blur(12px);
+border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+/* Animations */
+@keyframes fadeUp {
+from { opacity: 0; transform: translateY(20px); }
+to { opacity: 1; transform: translateY(0); }
+}
+.animate-up {
+animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+opacity: 0;
+}
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+.delay-300 { animation-delay: 0.3s; }
+/* Mobile Menu Transition */
+#mobile-menu {
+transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Interactive Elements */
+.btn-press {
+transition: all 0.15s ease;
+}
+.btn-press:active {
+transform: scale(0.96);
+}
+</style>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+  <body class="bg-neutral-50 selection:bg-red-100 selection:text-red-900 relative">
+    <!-- Top Bar -->
+    <div class="bg-neutral-900 text-white py-2 px-6 hidden md:block border-b border-neutral-800">
+      <div class="max-w-[1400px] mx-auto flex justify-between items-center text-xs font-medium tracking-wide">
+        <div class="flex items-center gap-6">
+          <a href="mailto:AMIGOS2404@GMAIL.COM" class="flex items-center gap-2 hover:text-red-400 transition-colors focus:outline-none focus:text-red-400">
+            <iconify-icon icon="lucide:mail" width="14"></iconify-icon>
+            AMIGOS2404@GMAIL.COM
+          </a>
+          <span class="flex items-center gap-2">
+            <iconify-icon icon="lucide:phone" width="14"></iconify-icon>
+            713-393-7667
+          </span>
+        </div>
+        <div class="flex items-center gap-4">
+          <a href="https://www.amigoscarsandtrucks.com/contact.php" class="hover:text-red-400 transition-colors focus:outline-none focus:text-red-400">
+            Contact Us
+          </a>
+          <span class="text-neutral-700">|</span>
+          <a href="https://www.amigoscarsandtrucks.com/vehicle_listings/all/vehicles" class="flex items-center gap-2 hover:text-red-400 transition-colors focus:outline-none focus:text-red-400">
+            <iconify-icon icon="lucide:car" width="14"></iconify-icon>
+            Search Inventory
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="sticky top-0 z-50 glass">
+      <div class="max-w-[1400px] mx-auto px-6 h-20 flex items-center justify-between">
+        <!-- Logo -->
+        <a href="https://www.amigoscarsandtrucks.com/" class="flex items-center btn-press focus:outline-none">
+          <img src="media/logo_86.png" alt="AMIGOS CARS & TRUCKS" class="h-12 w-auto object-contain">
+        </a>
+
+        <!-- Desktop Links -->
+        <div class="hidden lg:flex items-center gap-8">
+          <a href="https://www.amigoscarsandtrucks.com/" class="text-sm font-medium text-neutral-600 hover:text-red-600 transition-colors py-2 focus:outline-none focus:text-red-600">
+            Home
+          </a>
+          <a href="https://www.amigoscarsandtrucks.com/vehicle_listings/all/vehicles" class="text-sm font-medium text-neutral-600 hover:text-red-600 transition-colors py-2 focus:outline-none focus:text-red-600">
+            Search Vehicles
+          </a>
+          <div class="relative group h-full flex items-center">
+            <button class="flex items-center gap-1 text-sm font-medium text-neutral-600 group-hover:text-red-600 transition-colors focus:outline-none">
+              Finance & More
+              <iconify-icon icon="lucide:chevron-down" width="14" class="group-hover:rotate-180 transition-transform duration-300"></iconify-icon>
+            </button>
+            <!-- Dropdown -->
+            <div class="absolute top-14 left-0 w-48 bg-white border border-neutral-100 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 transform translate-y-2 group-hover:translate-y-0 overflow-hidden">
+              <div class="flex flex-col p-1">
+                <a href="https://www.amigoscarsandtrucks.com/content/825/call--cesar" class="px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50 hover:text-red-600 rounded-md transition-colors">
+                  CALL CESAR
+                </a>
+                <a href="https://www.myfexaccount.com/clients/_master/myfexaccount_default.aspx" class="px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50 hover:text-red-600 rounded-md transition-colors">
+                  Fex Pay
+                </a>
+                <a href="/credit_application_page.php" class="px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50 hover:text-red-600 rounded-md transition-colors">
+                  Credit Application
+                </a>
+                <a href="https://www.amigoscarsandtrucks.com/contact.php" class="px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50 hover:text-red-600 rounded-md transition-colors">
+                  Contact / Map
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CTA -->
+        <div class="flex items-center gap-4">
+          <a href="https://www.amigoscarsandtrucks.com/contact.php" class="hidden sm:flex items-center gap-2 px-5 py-2.5 rounded-lg bg-neutral-900 text-white text-sm font-semibold hover:bg-red-600 transition-all duration-300 shadow-lg shadow-neutral-900/10 hover:shadow-red-600/20 btn-press focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900">
+            <iconify-icon icon="lucide:phone" width="16"></iconify-icon>
+            Contact Us
+          </a>
+          <button id="mobile-menu-btn" class="lg:hidden p-2 text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors btn-press">
+            <iconify-icon icon="lucide:menu" width="24"></iconify-icon>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu" class="fixed inset-y-0 right-0 z-[60] w-full max-w-xs bg-white shadow-2xl transform translate-x-full lg:hidden">
+      <div class="p-6 h-full flex flex-col">
+        <div class="flex items-center justify-between mb-8">
+          <span class="font-heading font-bold text-xl tracking-tight">
+            Menu
+          </span>
+          <button id="close-menu-btn" class="p-2 hover:bg-neutral-100 rounded-full transition-colors text-neutral-500 hover:text-red-600">
+            <iconify-icon icon="lucide:x" width="24"></iconify-icon>
+          </button>
+        </div>
+        <div class="space-y-4 flex-1">
+          <a href="https://www.amigoscarsandtrucks.com/" class="block text-lg font-medium text-neutral-900 hover:text-red-600">
+            Home
+          </a>
+          <a href="https://www.amigoscarsandtrucks.com/vehicle_listings/all/vehicles" class="block text-lg font-medium text-neutral-900 hover:text-red-600">
+            Search All Vehicles
+          </a>
+          <div class="py-2 border-t border-b border-neutral-100 my-2">
+            <p class="text-xs font-bold text-neutral-400 uppercase tracking-widest mb-3">
+              Finance & More
+            </p>
+            <a href="https://www.amigoscarsandtrucks.com/content/825/call--cesar" class="block py-2 text-neutral-600 hover:text-red-600">
+              CALL CESAR
+            </a>
+            <a href="https://www.myfexaccount.com/clients/_master/myfexaccount_default.aspx" class="block py-2 text-neutral-600 hover:text-red-600">
+              Fex Pay
+            </a>
+            <a href="/credit_application_page.php" class="block py-2 text-neutral-600 hover:text-red-600">
+              Credit Application
+            </a>
+          </div>
+          <a href="https://www.amigoscarsandtrucks.com/contact.php" class="block text-lg font-medium text-neutral-900 hover:text-red-600">
+            Contact / Map
+          </a>
+        </div>
+        <a href="https://www.amigoscarsandtrucks.com/contact.php" class="flex items-center justify-center gap-2 px-5 py-3 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700 transition-all btn-press">
+          <iconify-icon icon="lucide:phone" width="18"></iconify-icon>
+          Contact Us
+        </a>
+      </div>
+    </div>
+    <!-- Overlay Backdrop -->
+    <div id="menu-backdrop" class="fixed inset-0 bg-black/20 z-[55] backdrop-blur-sm hidden lg:hidden opacity-0 transition-opacity duration-300"></div>
+
+    <!-- Hero Section -->
+    <header class="relative min-h-[600px] flex items-center justify-center overflow-hidden bg-neutral-900 pt-20 pb-32">
+      <!-- Background -->
+      <div class="absolute inset-0 z-0">
+        <img src="media/image_504821_1_img_2216.jpg" alt="Car Background" class="w-full h-full object-cover opacity-40">
+        <div class="absolute inset-0 bg-gradient-to-t from-neutral-900 via-neutral-900/60 to-transparent"></div>
+      </div>
+
+      <div class="relative z-10 w-full max-w-[1400px] px-6 text-center">
+        <span class="inline-block py-1 px-3 rounded-full bg-red-600/10 border border-red-600/20 text-red-500 text-xs font-bold uppercase tracking-widest mb-6 animate-up select-none">
+          Welcome to AMIGOS CARS & TRUCKS
+        </span>
+        <h1 class="font-heading text-5xl md:text-7xl font-bold text-white mb-6 tracking-tight leading-tight animate-up delay-100">
+          Find Your Next Vehicle in
+          <br class="hidden md:block">
+          <span class="text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-orange-500">
+            Houston, TX
+          </span>
+        </h1>
+        <p class="text-neutral-400 text-lg md:text-xl max-w-2xl mx-auto mb-12 font-light animate-up delay-200">
+          We know that buying a car is a big decision and can be stressful.
+          <br class="hidden md:block">
+          We strive to help make this process as easy and stress free as
+          possible.
+        </p>
+
+        <!-- Interactive Search Box -->
+        <form class="max-w-4xl mx-auto bg-white/10 backdrop-blur-md border border-white/10 p-2 rounded-2xl animate-up delay-300 shadow-2xl hover:shadow-red-900/20 transition-shadow duration-300">
+          <div class="bg-white rounded-xl p-2 flex flex-col md:flex-row gap-2">
+            <div class="relative flex-1 group">
+              <iconify-icon icon="lucide:search" class="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 group-focus-within:text-red-600 transition-colors" width="20"></iconify-icon>
+              <input type="text" placeholder="Keywords (Make, Model...)" class="w-full h-14 pl-12 pr-4 bg-transparent border-none outline-none text-neutral-900 placeholder-neutral-500 font-medium rounded-lg hover:bg-neutral-50 focus:bg-white focus:ring-2 focus:ring-red-500/20 transition-all">
+            </div>
+            <div class="w-px h-10 bg-neutral-200 self-center hidden md:block"></div>
+            <div class="relative flex-1 group">
+              <iconify-icon icon="lucide:map-pin" class="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-400 group-focus-within:text-red-600 transition-colors" width="20"></iconify-icon>
+              <input type="text" placeholder="Postcode or Location" class="w-full h-14 pl-12 pr-4 bg-transparent border-none outline-none text-neutral-900 placeholder-neutral-500 font-medium rounded-lg hover:bg-neutral-50 focus:bg-white focus:ring-2 focus:ring-red-500/20 transition-all">
+            </div>
+            <div class="w-px h-10 bg-neutral-200 self-center hidden md:block"></div>
+            <div class="relative w-full md:w-48 group">
+              <select class="w-full h-14 pl-4 pr-10 bg-transparent border-none outline-none text-neutral-900 font-medium cursor-pointer hover:bg-neutral-50 rounded-lg appearance-none focus:bg-white focus:ring-2 focus:ring-red-500/20 transition-all">
+                <option value="">All Categories</option>
+                <option value="cars">SUVs</option>
+                <option value="vans">Sedans</option>
+                <option value="parts">Trucks</option>
+              </select>
+              <iconify-icon icon="lucide:chevron-down" class="absolute right-4 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none group-focus-within:text-red-600 transition-colors" width="16"></iconify-icon>
+            </div>
+            <button type="button" class="h-14 px-8 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-all shadow-lg shadow-red-600/30 btn-press focus:ring-4 focus:ring-red-600/20">
+              Search
+            </button>
+          </div>
+        </form>
+      </div>
+    </header>
+
+    <!-- Categories Section -->
+    <section class="py-24 px-6 bg-white border-b border-neutral-100">
+      <div class="max-w-[1400px] mx-auto">
+        <div class="flex justify-between items-end mb-12">
+          <div>
+            <h2 class="font-heading text-3xl font-bold text-neutral-900 mb-2">
+              Browse Our Inventory
+            </h2>
+            <p class="text-neutral-500">
+              Find exactly what you are looking for with our categorized search.
+            </p>
+          </div>
+          <a href="https://www.amigoscarsandtrucks.com/vehicle_listings/all/vehicles" class="text-red-600 font-semibold text-sm hover:text-red-700 flex items-center gap-1 group py-2 px-3 rounded hover:bg-red-50 transition-all btn-press">
+            View All
+            <iconify-icon icon="lucide:arrow-right" class="group-hover:translate-x-1 transition-transform"></iconify-icon>
+          </a>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+          <!-- Categories with active states -->
+          <a href="#" class="group relative aspect-[4/5] rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 btn-press focus:ring-4 focus:ring-red-500/20">
+            <img src="media/image_528569_1_img_2465.jpg" alt="Cars" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+            <div class="absolute bottom-6 left-6 text-white">
+              <h3 class="font-bold text-xl mb-1 group-hover:text-red-400 transition-colors">
+                Ford
+              </h3>
+              <p class="text-xs text-neutral-300 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0 duration-300">
+                View Inventory
+              </p>
+            </div>
+          </a>
+
+          <a href="#" class="group relative aspect-[4/5] rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 btn-press focus:ring-4 focus:ring-red-500/20">
+            <img src="media/image_495223_1_img_1869.jpg" alt="Vans" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+            <div class="absolute bottom-6 left-6 text-white">
+              <h3 class="font-bold text-xl mb-1 group-hover:text-red-400 transition-colors">
+                SUVs
+              </h3>
+              <p class="text-xs text-neutral-300 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0 duration-300">
+                View Inventory
+              </p>
+            </div>
+          </a>
+
+          <a href="#" class="group relative aspect-[4/5] rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 btn-press focus:ring-4 focus:ring-red-500/20">
+            <img src="media/image_155327_img_5472.jpg" alt="Garages" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+            <div class="absolute bottom-6 left-6 text-white">
+              <h3 class="font-bold text-xl mb-1 group-hover:text-red-400 transition-colors">
+                <100K Miles
+              </h3>
+              <p class="text-xs text-neutral-300 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0 duration-300">
+                Low Mileage
+              </p>
+            </div>
+          </a>
+
+          <a href="#" class="group relative aspect-[4/5] rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 btn-press focus:ring-4 focus:ring-red-500/20">
+            <img src="media/image_556430_1_img_2717.jpg" alt="Parts" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+            <div class="absolute bottom-6 left-6 text-white">
+              <h3 class="font-bold text-xl mb-1 group-hover:text-red-400 transition-colors">
+                Crew Cabs
+              </h3>
+              <p class="text-xs text-neutral-300 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0 duration-300">
+                View Inventory
+              </p>
+            </div>
+          </a>
+
+          <a href="#" class="group relative aspect-[4/5] rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 btn-press focus:ring-4 focus:ring-red-500/20">
+            <img src="media/image_538884_1_img_2558.jpg" alt="Recovery" class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110">
+            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
+            <div class="absolute bottom-6 left-6 text-white">
+              <h3 class="font-bold text-xl mb-1 group-hover:text-red-400 transition-colors">
+                Vans
+              </h3>
+              <p class="text-xs text-neutral-300 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0 duration-300">
+                View Inventory
+              </p>
+            </div>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Why Choose GB Trader -->
+    <section class="py-24 px-6 bg-neutral-50">
+      <div class="max-w-[1400px] mx-auto">
+        <div class="grid lg:grid-cols-2 gap-16 items-center">
+          <div>
+            <span class="text-red-600 font-bold tracking-widest text-xs uppercase mb-2 block">
+              DID YOU KNOW?
+            </span>
+            <h2 class="font-heading text-4xl md:text-5xl font-bold text-neutral-900 mb-6 leading-tight">
+              Buying a vehicle has
+              <br class="hidden md:block">
+              never been easier!
+            </h2>
+            <p class="text-neutral-600 text-lg mb-8 leading-relaxed">
+              Welcome to our website. We have been in business for years,
+              selling high quality cars at the most affordable prices. We strive
+              to exceed all your expectations when buying a car.
+            </p>
+
+            <div class="grid sm:grid-cols-2 gap-y-8 gap-x-6">
+              <!-- Features -->
+              <div class="flex gap-4 group cursor-default">
+                <div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <iconify-icon icon="lucide:search" width="20"></iconify-icon>
+                </div>
+                <div>
+                  <h4 class="font-bold text-neutral-900 mb-1">
+                    Special Financing
+                  </h4>
+                  <p class="text-sm text-neutral-500 leading-relaxed">
+                    Special financing and in-house finance available.
+                  </p>
+                </div>
+              </div>
+              <div class="flex gap-4 group cursor-default">
+                <div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <iconify-icon icon="lucide:shield-check" width="20"></iconify-icon>
+                </div>
+                <div>
+                  <h4 class="font-bold text-neutral-900 mb-1">Easy Approval</h4>
+                  <p class="text-sm text-neutral-500 leading-relaxed">
+                    Easy online credit approval process available.
+                  </p>
+                </div>
+              </div>
+              <div class="flex gap-4 group cursor-default">
+                <div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <iconify-icon icon="lucide:message-circle" width="20"></iconify-icon>
+                </div>
+                <div>
+                  <h4 class="font-bold text-neutral-900 mb-1">
+                    Collateral Protection
+                  </h4>
+                  <p class="text-sm text-neutral-500 leading-relaxed">
+                    Affordable collateral protection available onsite.
+                  </p>
+                </div>
+              </div>
+              <div class="flex gap-4 group cursor-default">
+                <div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <iconify-icon icon="lucide:map" width="20"></iconify-icon>
+                </div>
+                <div>
+                  <h4 class="font-bold text-neutral-900 mb-1">
+                    Onsite Mechanic
+                  </h4>
+                  <p class="text-sm text-neutral-500 leading-relaxed">
+                    Best pricing and service on future mechanical needs.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-10 flex gap-4">
+              <a href="https://www.amigoscarsandtrucks.com/contact.php" class="px-6 py-3 bg-red-600 text-white rounded-lg font-semibold text-sm hover:bg-red-700 transition-all shadow-lg shadow-red-500/20 btn-press focus:ring-4 focus:ring-red-500/20">
+                Contact Us
+              </a>
+              <a href="/credit_application_page.php" class="px-6 py-3 bg-white border border-neutral-200 text-neutral-900 rounded-lg font-semibold text-sm hover:border-neutral-300 hover:bg-neutral-50 transition-all btn-press focus:ring-4 focus:ring-neutral-200">
+                Credit Application
+              </a>
+            </div>
+          </div>
+          <div class="relative">
+            <div class="absolute -inset-4 bg-gradient-to-r from-red-100 to-orange-100 rounded-3xl transform rotate-2 blur-lg opacity-60"></div>
+            <img src="media/photo-1552519507-da3b142c6e3d.jpg" alt="Dashboard" class="relative rounded-2xl shadow-2xl border border-white/50 hover:scale-[1.02] transition-transform duration-500">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Featured Listings -->
+    <section class="py-24 px-6 bg-white">
+      <div class="max-w-[1400px] mx-auto">
+        <div class="flex flex-col md:flex-row justify-between items-end mb-12 gap-4">
+          <div>
+            <h2 class="font-heading text-3xl font-bold text-neutral-900 mb-2">
+              Featured Vehicles
+            </h2>
+            <p class="text-neutral-500">
+              Browse our handpicked selection of top-quality cars and trucks.
+            </p>
+          </div>
+          <!-- Controls -->
+          <div class="flex gap-2">
+            <button class="w-10 h-10 rounded-full border border-neutral-200 flex items-center justify-center hover:bg-neutral-100 hover:border-neutral-300 transition-colors text-neutral-600 btn-press focus:outline-none focus:ring-2 focus:ring-neutral-400">
+              <iconify-icon icon="lucide:arrow-left" width="18"></iconify-icon>
+            </button>
+            <button class="w-10 h-10 rounded-full bg-neutral-900 text-white flex items-center justify-center hover:bg-red-600 transition-colors border border-transparent btn-press focus:outline-none focus:ring-2 focus:ring-red-600 shadow-lg shadow-neutral-900/20">
+              <iconify-icon icon="lucide:arrow-right" width="18"></iconify-icon>
+            </button>
+          </div>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <!-- Listing 1 -->
+          <div class="group bg-white rounded-xl border border-neutral-200 overflow-hidden hover:shadow-xl transition-all duration-300 hover:border-red-100 cursor-pointer">
+            <div class="relative aspect-[4/3] overflow-hidden bg-neutral-100">
+              <span class="absolute top-3 left-3 bg-white/90 backdrop-blur px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider text-neutral-900 z-10 shadow-sm">
+                Featured
+              </span>
+              <button class="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/40 backdrop-blur flex items-center justify-center text-white hover:bg-red-600 hover:text-white transition-all z-10 btn-press">
+                <iconify-icon icon="lucide:heart" width="16"></iconify-icon>
+              </button>
+              <img src="media/image_504821_1_img_2216.jpg" alt="BMW X3" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+            </div>
+            <div class="p-5">
+              <div class="flex justify-between items-start mb-2">
+                <h3 class="font-heading font-semibold text-lg text-neutral-900 line-clamp-1 group-hover:text-red-600 transition-colors">
+                  2017 Acura MDX
+                </h3>
+                <span class="text-sm font-bold text-red-600">
+                  Down Payment: $3,500
+                </span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-neutral-500 mb-4">
+                <iconify-icon icon="lucide:map-pin" width="12"></iconify-icon>
+                165,300 Miles
+              </div>
+              <div class="flex gap-2 mb-4">
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  2017
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  Acura
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  MDX
+                </span>
+              </div>
+              <button class="block w-full py-2.5 text-center rounded-lg border border-neutral-200 text-sm font-semibold text-neutral-700 hover:bg-neutral-900 hover:text-white hover:border-neutral-900 transition-colors btn-press focus:ring-2 focus:ring-neutral-900">
+                View Details
+              </button>
+            </div>
+          </div>
+
+          <!-- Listing 2 -->
+          <div class="group bg-white rounded-xl border border-neutral-200 overflow-hidden hover:shadow-xl transition-all duration-300 hover:border-red-100 cursor-pointer">
+            <div class="relative aspect-[4/3] overflow-hidden bg-neutral-100">
+              <span class="absolute top-3 left-3 bg-white/90 backdrop-blur px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider text-neutral-900 z-10 shadow-sm">
+                Featured
+              </span>
+              <img src="media/image_155327_img_5472.jpg" alt="Nissan Micra" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+            </div>
+            <div class="p-5">
+              <div class="flex justify-between items-start mb-2">
+                <h3 class="font-heading font-semibold text-lg text-neutral-900 line-clamp-1 group-hover:text-red-600 transition-colors">
+                  1990 PORSCHE 944 S2
+                </h3>
+                <span class="text-sm font-bold text-red-600">
+                  Call for Price
+                </span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-neutral-500 mb-4">
+                <iconify-icon icon="lucide:map-pin" width="12"></iconify-icon>
+                64,000 Miles
+              </div>
+              <div class="flex gap-2 mb-4">
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  1990
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  Porsche
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  Convertible
+                </span>
+              </div>
+              <button class="block w-full py-2.5 text-center rounded-lg border border-neutral-200 text-sm font-semibold text-neutral-700 hover:bg-neutral-900 hover:text-white hover:border-neutral-900 transition-colors btn-press focus:ring-2 focus:ring-neutral-900">
+                View Details
+              </button>
+            </div>
+          </div>
+
+          <!-- Listing 3 -->
+          <div class="group bg-white rounded-xl border border-neutral-200 overflow-hidden hover:shadow-xl transition-all duration-300 hover:border-red-100 cursor-pointer">
+            <div class="relative aspect-[4/3] overflow-hidden bg-neutral-100">
+              <span class="absolute top-3 left-3 bg-white/90 backdrop-blur px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider text-neutral-900 z-10 shadow-sm">
+                Featured
+              </span>
+              <img src="media/image_504278_1_img_2090.jpg" alt="BMW 1 Series" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+            </div>
+            <div class="p-5">
+              <div class="flex justify-between items-start mb-2">
+                <h3 class="font-heading font-semibold text-lg text-neutral-900 line-clamp-1 group-hover:text-red-600 transition-colors">
+                  2013 TOYOTA HIGHLANDER
+                </h3>
+                <span class="text-sm font-bold text-red-600">
+                  Down Payment: $2,500
+                </span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-neutral-500 mb-4">
+                <iconify-icon icon="lucide:map-pin" width="12"></iconify-icon>
+                164,000 Miles
+              </div>
+              <div class="flex gap-2 mb-4">
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  2013
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  Toyota
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  SUV
+                </span>
+              </div>
+              <button class="block w-full py-2.5 text-center rounded-lg border border-neutral-200 text-sm font-semibold text-neutral-700 hover:bg-neutral-900 hover:text-white hover:border-neutral-900 transition-colors btn-press focus:ring-2 focus:ring-neutral-900">
+                View Details
+              </button>
+            </div>
+          </div>
+
+          <!-- Listing 4 -->
+          <div class="group bg-white rounded-xl border border-neutral-200 overflow-hidden hover:shadow-xl transition-all duration-300 hover:border-red-100 cursor-pointer">
+            <div class="relative aspect-[4/3] overflow-hidden bg-neutral-100">
+              <span class="absolute top-3 left-3 bg-white/90 backdrop-blur px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider text-neutral-900 z-10 shadow-sm">
+                Featured
+              </span>
+              <img src="media/image_465089_img_0321.jpg" alt="Range Rover Sport" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+            </div>
+            <div class="p-5">
+              <div class="flex justify-between items-start mb-2">
+                <h3 class="font-heading font-semibold text-lg text-neutral-900 line-clamp-1 group-hover:text-red-600 transition-colors">
+                  2020 JEEP WRANGLER
+                </h3>
+                <span class="text-sm font-bold text-red-600">
+                  Down Payment: $7,000
+                </span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-neutral-500 mb-4">
+                <iconify-icon icon="lucide:map-pin" width="12"></iconify-icon>
+                173,900 Miles
+              </div>
+              <div class="flex gap-2 mb-4">
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  2020
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  Jeep
+                </span>
+                <span class="px-2 py-1 bg-neutral-50 border border-neutral-100 rounded text-[10px] font-medium text-neutral-600">
+                  Wrangler
+                </span>
+              </div>
+              <button class="block w-full py-2.5 text-center rounded-lg border border-neutral-200 text-sm font-semibold text-neutral-700 hover:bg-neutral-900 hover:text-white hover:border-neutral-900 transition-colors btn-press focus:ring-2 focus:ring-neutral-900">
+                View Details
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Registration Steps -->
+    <section class="py-24 px-6 bg-neutral-900 text-white relative overflow-hidden">
+      <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+      <div class="max-w-[1400px] mx-auto relative z-10">
+        <div class="text-center mb-16">
+          <h2 class="font-heading text-3xl md:text-4xl font-bold mb-4">
+            We Make Car Buying Easy
+          </h2>
+          <p class="text-neutral-400">
+            Let us help you take the hassle out of the experience and turn that
+            big decision into an easy one.
+          </p>
+        </div>
+
+        <div class="grid md:grid-cols-4 gap-8">
+          <!-- Step Cards with Hover -->
+          <div class="bg-neutral-800/50 p-8 rounded-2xl border border-neutral-700 hover:border-red-600/50 hover:bg-neutral-800 transition-all duration-300 backdrop-blur-sm group cursor-pointer hover:transform hover:-translate-y-1">
+            <div class="w-12 h-12 rounded-lg bg-neutral-700 flex items-center justify-center text-white mb-6 group-hover:bg-red-600 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-red-600/20">
+              <span class="font-heading font-bold text-xl">1</span>
+            </div>
+            <h4 class="font-bold text-lg mb-2 group-hover:text-red-400 transition-colors">
+              Browse Inventory
+            </h4>
+            <p class="text-sm text-neutral-400">
+              Search our wide selection of vehicles online or in person.
+            </p>
+          </div>
+          <div class="bg-neutral-800/50 p-8 rounded-2xl border border-neutral-700 hover:border-red-600/50 hover:bg-neutral-800 transition-all duration-300 backdrop-blur-sm group cursor-pointer hover:transform hover:-translate-y-1">
+            <div class="w-12 h-12 rounded-lg bg-neutral-700 flex items-center justify-center text-white mb-6 group-hover:bg-red-600 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-red-600/20">
+              <span class="font-heading font-bold text-xl">2</span>
+            </div>
+            <h4 class="font-bold text-lg mb-2 group-hover:text-red-400 transition-colors">
+              Apply Online
+            </h4>
+            <p class="text-sm text-neutral-400">
+              Fill out our easy online credit application to get started.
+            </p>
+          </div>
+          <div class="bg-neutral-800/50 p-8 rounded-2xl border border-neutral-700 hover:border-red-600/50 hover:bg-neutral-800 transition-all duration-300 backdrop-blur-sm group cursor-pointer hover:transform hover:-translate-y-1">
+            <div class="w-12 h-12 rounded-lg bg-neutral-700 flex items-center justify-center text-white mb-6 group-hover:bg-red-600 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-red-600/20">
+              <span class="font-heading font-bold text-xl">3</span>
+            </div>
+            <h4 class="font-bold text-lg mb-2 group-hover:text-red-400 transition-colors">
+              Get Approved
+            </h4>
+            <p class="text-sm text-neutral-400">
+              We offer special financing and in-house options for everyone.
+            </p>
+          </div>
+          <div class="bg-neutral-800/50 p-8 rounded-2xl border border-neutral-700 hover:border-red-600/50 hover:bg-neutral-800 transition-all duration-300 backdrop-blur-sm group cursor-pointer hover:transform hover:-translate-y-1">
+            <div class="w-12 h-12 rounded-lg bg-neutral-700 flex items-center justify-center text-white mb-6 group-hover:bg-red-600 transition-all duration-300 group-hover:shadow-lg group-hover:shadow-red-600/20">
+              <span class="font-heading font-bold text-xl">4</span>
+            </div>
+            <h4 class="font-bold text-lg mb-2 group-hover:text-red-400 transition-colors">
+              Drive Away
+            </h4>
+            <p class="text-sm text-neutral-400">
+              Complete your purchase and drive off in your new vehicle.
+            </p>
+          </div>
+        </div>
+
+        <div class="text-center mt-12">
+          <a href="https://www.amigoscarsandtrucks.com/contact.php" class="inline-flex items-center gap-2 px-8 py-4 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition-all shadow-lg shadow-red-900/50 btn-press focus:ring-4 focus:ring-red-900/50">
+            Contact Us Today
+            <iconify-icon icon="lucide:arrow-right" width="18"></iconify-icon>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- News Section -->
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-neutral-200 pt-20 pb-10">
+      <div class="max-w-[1400px] mx-auto px-6">
+        <div class="grid md:grid-cols-4 gap-12 mb-16">
+          <!-- Brand -->
+          <div class="col-span-1 md:col-span-1">
+            <a href="https://www.amigoscarsandtrucks.com/" class="flex items-center mb-6 group focus:outline-none">
+              <img src="media/logo_86.png" alt="AMIGOS CARS & TRUCKS" class="h-10 w-auto object-contain">
+            </a>
+            <p class="text-sm text-neutral-500 mb-6 leading-relaxed">
+              Welcome to AMIGOS CARS & TRUCKS. We know that buying a car is
+              a big decision and can be stressful. We strive to help make this
+              process as easy and stress free as possible.
+            </p>
+            <div class="flex gap-4">
+              <a href="https://www.facebook.com/amigoscarsandtrucks?ref=bookmarks" class="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-600 hover:bg-red-600 hover:text-white transition-all btn-press">
+                <iconify-icon icon="lucide:facebook" width="16"></iconify-icon>
+              </a>
+              <a href="https://mobile.twitter.com/Amigos2404" class="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-600 hover:bg-red-600 hover:text-white transition-all btn-press">
+                <iconify-icon icon="lucide:twitter" width="16"></iconify-icon>
+              </a>
+              <a href="https://www.instagram.com/amigoscars/" class="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-600 hover:bg-red-600 hover:text-white transition-all btn-press">
+                <iconify-icon icon="lucide:instagram" width="16"></iconify-icon>
+              </a>
+              <a href="https://www.youtube.com/channel/UCTZpbUADFirgUHpR6NOJ_1A" class="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-600 hover:bg-red-600 hover:text-white transition-all btn-press">
+                <iconify-icon icon="lucide:youtube" width="16"></iconify-icon>
+              </a>
+            </div>
+          </div>
+
+          <!-- Links -->
+          <div>
+            <h4 class="font-bold text-neutral-900 mb-6">Website Links</h4>
+            <ul class="space-y-3 text-sm text-neutral-500">
+              <li>
+                <a href="https://www.amigoscarsandtrucks.com/" class="hover:text-red-600 hover:translate-x-1 inline-block transition-all focus:text-red-600">
+                  Home
+                </a>
+              </li>
+              <li>
+                <a href="https://www.amigoscarsandtrucks.com/vehicle_listings/all/vehicles" class="hover:text-red-600 hover:translate-x-1 inline-block transition-all focus:text-red-600">
+                  Search Inventory
+                </a>
+              </li>
+              <li>
+                <a href="/credit_application_page.php" class="hover:text-red-600 hover:translate-x-1 inline-block transition-all focus:text-red-600">
+                  Credit Application
+                </a>
+              </li>
+              <li>
+                <a href="https://www.amigoscarsandtrucks.com/contact.php" class="hover:text-red-600 hover:translate-x-1 inline-block transition-all focus:text-red-600">
+                  Contact Us
+                </a>
+              </li>
+              <li>
+                <a href="https://www.amigoscarsandtrucks.com/testimonials.php" class="hover:text-red-600 hover:translate-x-1 inline-block transition-all focus:text-red-600">
+                  Testimonials
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <!-- Support -->
+          <div>
+            <h4 class="font-bold text-neutral-900 mb-6">
+              Locations & Hours
+            </h4>
+            <ul class="space-y-3 text-sm text-neutral-500">
+              <li class="text-neutral-900 font-semibold mb-1">
+                AMIGOS CARS & TRUCKS
+              </li>
+              <li class="mb-3">
+                7001 AIRLINE DR
+                <br>
+                HOUSTON, TX 77076
+                <br>
+                713-393-7667
+              </li>
+              <li class="text-neutral-900 font-semibold mb-1">
+                AMIGOS CARS & TRUCKS II
+              </li>
+              <li class="mb-3">
+                6849 AVE T
+                <br>
+                HOUSTON, TEXAS 77011
+                <br>
+                713-514-8141
+              </li>
+              <li class="text-neutral-900 font-semibold mb-1">Hours</li>
+              <li>
+                Mon-Fri: 9am-7pm
+                <br>
+                Sat: 9am-6pm
+              </li>
+            </ul>
+          </div>
+
+          <!-- Contact -->
+          <div>
+            <h4 class="font-bold text-neutral-900 mb-6">Contact Info</h4>
+            <ul class="space-y-4 text-sm text-neutral-500">
+              <li class="flex items-start gap-3 group">
+                <iconify-icon icon="lucide:map-pin" class="text-red-600 shrink-0 mt-0.5 group-hover:scale-110 transition-transform"></iconify-icon>
+                <span>
+                  7001 AIRLINE DR
+                  <br>
+                  HOUSTON, TX 77076
+                </span>
+              </li>
+              <li class="flex items-center gap-3 group">
+                <iconify-icon icon="lucide:phone" class="text-red-600 shrink-0 group-hover:scale-110 transition-transform"></iconify-icon>
+                <a href="tel:7133937667" class="hover:text-neutral-900 transition-colors">
+                  713-393-7667
+                </a>
+              </li>
+              <li class="flex items-center gap-3 group">
+                <iconify-icon icon="lucide:mail" class="text-red-600 shrink-0 group-hover:scale-110 transition-transform"></iconify-icon>
+                <a href="mailto:AMIGOS2404@GMAIL.COM" class="hover:text-neutral-900 transition-colors">
+                  AMIGOS2404@GMAIL.COM
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="border-t border-neutral-100 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+          <p class="text-xs text-neutral-400">
+            © 2024 AMIGOS CARS & TRUCKS. All rights reserved.
+          </p>
+          <div class="flex gap-2 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
+            <!-- Fake Payment Icons -->
+            <div class="h-6 w-10 bg-neutral-200 rounded"></div>
+            <div class="h-6 w-10 bg-neutral-300 rounded"></div>
+            <div class="h-6 w-10 bg-neutral-200 rounded"></div>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+          // Mobile Menu Logic
+          const mobileBtn = document.getElementById('mobile-menu-btn');
+          const closeBtn = document.getElementById('close-menu-btn');
+          const mobileMenu = document.getElementById('mobile-menu');
+          const backdrop = document.getElementById('menu-backdrop');
+          const body = document.body;
+
+          function toggleMenu() {
+              const isHidden = mobileMenu.classList.contains('translate-x-full');
+
+              if (isHidden) {
+                  // Open
+                  mobileMenu.classList.remove('translate-x-full');
+                  backdrop.classList.remove('hidden');
+                  // Small delay to allow display:block to apply before opacity transition
+                  setTimeout(() => {
+                      backdrop.classList.remove('opacity-0');
+                  }, 10);
+                  body.style.overflow = 'hidden'; // Prevent background scrolling
+              } else {
+                  // Close
+                  mobileMenu.classList.add('translate-x-full');
+                  backdrop.classList.add('opacity-0');
+                  setTimeout(() => {
+                      backdrop.classList.add('hidden');
+                  }, 300);
+                  body.style.overflow = '';
+              }
+          }
+
+          if(mobileBtn) mobileBtn.addEventListener('click', toggleMenu);
+          if(closeBtn) closeBtn.addEventListener('click', toggleMenu);
+          if(backdrop) backdrop.addEventListener('click', toggleMenu);
+
+          // Animation Observer
+          const observer = new IntersectionObserver((entries) => {
+              entries.forEach(entry => {
+                  if (entry.isIntersecting) {
+                      entry.target.style.opacity = '1';
+                      entry.target.style.transform = 'translateY(0)';
+                  }
+              });
+          });
+
+          // Button Click Simulation (Visual only)
+          const buttons = document.querySelectorAll('button:not(#mobile-menu-btn):not(#close-menu-btn), a.btn');
+          buttons.forEach(btn => {
+              btn.addEventListener('click', function(e) {
+                  // Just a visual ripple effect or console log to show it "worked"
+                  // In a real app, this would submit forms or navigate
+              });
+          });
+      });
+    </script>
+  
+</body></html>

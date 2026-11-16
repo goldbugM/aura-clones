@@ -1,0 +1,33 @@
+{
+ "slug": "below-is-the-87",
+ "overall": 0.772,
+ "structure": 1.0,
+ "copy": 0.999,
+ "design": 0.085,
+ "motion": 0.537,
+ "media": 1.0,
+ "pixel": 0.86,
+ "text_similarity": 0.998,
+ "sections": [
+  4,
+  4
+ ],
+ "headings": [
+  25,
+  25
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  13,
+  13
+ ],
+ "heights": [
+  4082,
+  4082
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

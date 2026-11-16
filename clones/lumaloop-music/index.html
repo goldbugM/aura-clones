@@ -1,0 +1,1416 @@
+<html lang="en"><head><script data-session="e5b8bb34-3e1f-4567-8c42-91626db2ef00" data-parent-origin="https://lumaloop-music.aura.build" data-parent-url="https://lumaloop-music.aura.build/" data-dynamic-page-slugs="[]">Object.defineProperty(window, "__AURA_OPAQUE_STORAGE__", {value: {
+        seed: {"localStorage":[],"sessionStorage":[]},
+        persist: function(area, operation, key, value) {
+          parent.postMessage({channel:"aura-published-v1",session:"e5b8bb34-3e1f-4567-8c42-91626db2ef00",
+            type:"widget-storage",area:area,operation:operation,key:key,value:value},"https://lumaloop-music.aura.build");
+        }
+      }});
+(function () {
+  if (window.parent === window || window.origin !== "null" || window.__AURA_PUBLISHED_EMBEDS__) return;
+  window.__AURA_PUBLISHED_EMBEDS__ = true;
+  var placeholders = new WeakMap();
+
+  // Instagram's embed.js ignores null-origin MOUNTED/MEASURE messages, leaving
+  // its frames absolutely positioned at height=0. Descendants inherit our
+  // sandbox. Handle only sizing, without forging origins or granting storage,
+  // cookie, parent-document or arbitrary style access to the embedded provider.
+  function instagramPost(value, embed) {
+    try {
+      var url = new URL(value);
+      if (url.protocol !== "https:" || url.port || url.username || url.password ||
+          !/^(www\.)?(instagram\.com|instagr\.am)$/.test(url.hostname)) return null;
+      var match = url.pathname.match(embed
+        ? /^\/(p|reel|tv)\/([a-zA-Z0-9_-]+)\/embed(?:\/captioned)?\/?$/
+        : /^\/(p|reel|tv)\/([a-zA-Z0-9_-]+)\/?$/);
+      return match && match[1] + "/" + match[2];
+    } catch { return null; }
+  }
+  window.addEventListener("message", function (event) {
+    if (!event.isTrusted || event.origin !== "null" || !event.source || event.source === window ||
+        typeof event.data !== "string" || event.data.length > 16384) return;
+    var message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (!message || (message.type !== "MOUNTED" && message.type !== "MEASURE") ||
+        !message.details || typeof message.details !== "object") return;
+    var frames = document.querySelectorAll("iframe.instagram-media[data-instgrm-payload-id]");
+    for (var frame of frames) {
+      if (frame.contentWindow !== event.source) continue;
+      var post = instagramPost(frame.src, true);
+      if (!post) return;
+      var payloadId = frame.getAttribute("data-instgrm-payload-id");
+      var known = placeholders.get(frame);
+      if (!known || known.post !== post || known.id !== payloadId) {
+        var element = document.getElementById(payloadId);
+        if (!element || element.tagName !== "BLOCKQUOTE" || element.parentNode !== frame.parentNode ||
+            instagramPost(element.getAttribute("data-instgrm-permalink")) !== post) return;
+        known = { post: post, id: payloadId, element: element };
+        placeholders.set(frame, known);
+      }
+      var placeholder = known.element;
+      if (message.type === "MEASURE") {
+        var height = message.details.height;
+        if (typeof height === "number" && Number.isFinite(height) && height > 0 && height <= 10000)
+          frame.height = String(Math.ceil(height));
+      } else {
+        if (!(Number(frame.height) > 0)) frame.height = String(Math.max(1, placeholder.clientHeight));
+        frame.style.position = frame.getAttribute("data-instgrm-preserve-position") || "";
+        frame.classList.add("instagram-media-rendered");
+        // Match the SDK's DOM replacement: hidden placeholders still affect
+        // grid :nth-child selectors. Retain only the private sizing association.
+        placeholder.remove();
+      }
+      return;
+    }
+  });
+})();
+(()=>{function q(t){if(!t)return()=>{};let e=n=>{if(n.defaultPrevented)return;let i=n.target;if(!i)return;let c=i.closest?.("a");if(!c)return;let l=(c.getAttribute("href")||"").trim(),s=null;if(l.startsWith("#"))s=decodeURIComponent(l.slice(1));else{let a=l.indexOf("#");if(a>=0){let m=l.slice(0,a).toLowerCase(),d=l.slice(a+1);(m===""||m==="/"||m==="./"||m.endsWith("/index.html")||m==="index.html")&&(s=decodeURIComponent(d))}}if(s==null)return;if(n.preventDefault(),s===""||s.toLowerCase()==="top"){try{t.defaultView?.scrollTo({top:0,behavior:"smooth"}),t.defaultView&&(t.defaultView.location.hash="#"+s)}catch{t.defaultView?.scrollTo(0,0)}return}let r=t.getElementById(s);if(!r){let a=m=>window.CSS&&window.CSS.escape?window.CSS.escape(m):m.replace(/"/g,'\\"').replace(/\\/g,"\\\\");try{r=t.querySelector(`[name="${a(s)}"]`)}catch{}}if(r){try{r.scrollIntoView({behavior:"smooth",block:"start"})}catch{r.scrollIntoView()}try{t.defaultView&&(t.defaultView.location.hash=`#${s}`)}catch{}}};return t.addEventListener("click",e),()=>{try{t.removeEventListener("click",e)}catch{}}}function $(t,e,n,i=window.location.href){if(!t)return()=>{};let c=a=>{try{return new URL(a,i).origin!==new URL(i).origin}catch{return!1}},l=a=>{try{window.open(a,"_blank","noopener,noreferrer")}catch{}},s=(n||[]).map(a=>{let m=a.match(/^([a-z0-9-]+)\/:slug$/i);return m?m[1].toLowerCase():null}).filter(Boolean),r=a=>{if(a.button!==0||a.metaKey||a.ctrlKey||a.shiftKey||a.altKey)return;let m=a.target;if(!m)return;let d=p=>{if(!p)return!1;try{let f=new URL(p,i).pathname||"/",h=new URL(i).pathname.match(/^\/(?:share|s)\/[^/]+/)?.[0];if(h&&(f===h||f.startsWith(h+"/"))&&(f=f.slice(h.length)||"/"),f==="/"||f.toLowerCase()==="/index.html")return a.preventDefault(),a.stopPropagation(),e("home"),!0;let b=f.match(/^\/share\/([^\/]+)(?:\/([^\/]+))?$/);if(b){let A=b[2]||b[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}let C=f.match(/^\/s\/([^\/]+)(?:\/([^\/]+))?$/);if(C){let A=C[2]||C[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}let T=f.match(/^\/page\/([^\/]+)(?:\/([^\/]+))?$/);if(T){let A=T[2]||T[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}let v=f.match(/^\/([a-z0-9-]+)\/([^\/]+)$/i);if(v){let A=v[1].toLowerCase(),U=v[2],k;try{k=decodeURIComponent(U).toLowerCase()}catch{k=U.toLowerCase()}if(s.includes(A))return a.preventDefault(),a.stopPropagation(),e(`${A}/:slug`,k),!0}let O=f.match(/^\/([A-Za-z0-9_-]{1,64})$/);if(O){let A=O[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}}catch{}return!1},o=m.closest?.("a");if(o){let p=(o.getAttribute("href")||"").trim();if(!p||o.hasAttribute("download")||o.getAttribute("target")==="_blank"||/^(?:mailto:|tel:)/i.test(p)||/^[a-z][a-z0-9+.-]*:/i.test(p)&&!/^https?:/i.test(p)||p.startsWith("#"))return;let g=p.indexOf("#");if(g>=0){let f=p.slice(0,g).toLowerCase();if(f===""||f==="/"||f==="./"||f==="index.html"||f.endsWith("/index.html"))return}if(c(p)){a.preventDefault(),a.stopPropagation(),l(p);return}if(d(p))return}let u=m.closest?.("[onclick]");if(u){let p=u.getAttribute("onclick")||"",g=p.match(/["'](https?:\/\/[^"']+)["']/);if(g&&c(g[1])){a.preventDefault(),a.stopPropagation(),l(g[1]);return}let f=p.match(/["'](\/[A-Za-z0-9_\-\/]+)["']/);if(f&&d(f[1]))return}};return t.addEventListener("click",r,!0),()=>{try{t.removeEventListener("click",r,!0)}catch{}}}var B="aura-share-responsive-guards",E="aura-share-mobile-grid-stack";var gt=`
+@media (max-width: 639px) {
+  html,
+  body {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  #root {
+    max-width: 100% !important;
+  }
+
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
+  }
+
+  .${E} {
+    grid-template-columns: minmax(0, 1fr) !important;
+    column-gap: min(1rem, 4vw) !important;
+  }
+
+  .${E} > * {
+    grid-column: 1 / -1 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+`,z=t=>{let e=t.ownerDocument.defaultView;return!!(e&&t instanceof e.HTMLElement)},ht=t=>{for(let e of Array.from(t.classList)){let n=e.match(/^grid-cols-(\d+)$/);if(!n)continue;let i=Number(n[1]);if(Number.isFinite(i)&&i>1)return i}return 0},yt=(t,e)=>Array.from(t.children).some(n=>z(n)?n.classList.contains(`col-span-${e}`)||n.classList.contains("col-span-full"):!1),bt=(t,e)=>{if(e>639||!t.classList.contains("grid"))return!1;let n=ht(t);if(!n||!yt(t,n))return!1;let i=t.ownerDocument.defaultView;if(!i)return!1;let c=i.getComputedStyle(t),l=Number.parseFloat(c.columnGap||"0")||0,s=l*Math.max(0,n-1);return l>=20&&(s>=t.clientWidth*.4||t.scrollWidth>t.clientWidth+1)},wt=t=>{if(t.getElementById(B))return;let e=t.createElement("style");e.id=B,e.textContent=gt,t.head.appendChild(e)},At=t=>{let e=t.defaultView;if(!e)return;wt(t);let n=e.innerWidth||t.documentElement.clientWidth||0;t.querySelectorAll(`.${E}`).forEach(i=>i.classList.remove(E)),!(n>639)&&(t.querySelectorAll(".grid").forEach(i=>{z(i)&&bt(i,n)&&i.classList.add(E)}),e.scrollTo(0,e.scrollY||0),t.documentElement.scrollLeft=0,t.body&&(t.body.scrollLeft=0))},V=t=>{let e=t.defaultView;if(!e)return()=>{};let n=null,i=[],c=()=>{n!==null&&e.cancelAnimationFrame(n),n=e.requestAnimationFrame(()=>{n=null,At(t)})};return c(),i.push(e.setTimeout(c,250)),i.push(e.setTimeout(c,1e3)),e.addEventListener("resize",c),()=>{n!==null&&e.cancelAnimationFrame(n),i.forEach(l=>e.clearTimeout(l)),e.removeEventListener("resize",c)}};var P=async()=>[];function G(t){P=t}var K=t=>P(t),Z=(t,e)=>P(e);var L=new Map,y=null;function Ct(t){return/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)}var Et=`
+@keyframes cms-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.cms-loading {
+  position: relative;
+  color: transparent !important;
+  /* Override any background-image (inline styles, Tailwind bg-[url(...)]) */
+  background-image: none !important;
+  background-color: transparent !important;
+  background: linear-gradient(90deg, 
+    rgba(128, 128, 128, 0.1) 25%, 
+    rgba(128, 128, 128, 0.2) 50%, 
+    rgba(128, 128, 128, 0.1) 75%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: cms-shimmer 1.5s infinite !important;
+  border-radius: 12px;
+  min-height: 1em;
+  min-width: 3em;
+  overflow: hidden;
+}
+.cms-loading * {
+  visibility: hidden !important;
+}
+.cms-loading img {
+  opacity: 0 !important;
+}
+`;function St(t){if(t.getElementById("cms-loading-styles"))return;let e=t.createElement("style");e.id="cms-loading-styles",e.textContent=Et,t.head?.appendChild(e)}function Lt(t){St(t);let e=["[data-cms-item-slug]","[data-cms-item]","[data-cms-text-item-slug]","[data-cms-text-item]","[data-cms-image-item-slug]","[data-cms-image-item]","[data-cms-link-item-slug]","[data-cms-link-item]","[data-cms-loop]","[data-cms-field]","[data-cms-text-field]","[data-cms-image-field]","[data-cms-link-field]","[data-cms-collection]"];t.querySelectorAll(e.join(", ")).forEach(i=>{i.classList.add("cms-loading")})}function xt(t){t.querySelectorAll(".cms-loading").forEach(n=>{n.classList.remove("cms-loading")})}function Q(){L.clear(),y=null}async function F(t,e,n=!1){let i=Ct(t),c=i?`${t}:${n}`:`${e}:${t}:${n}`;if(y?.has(c))return y.get(c);if(L.has(c)){let l=L.get(c);return y?.set(c,l),l}try{let l;if(i)l=await K(t,n);else if(e)l=await Z(e,t,n);else return console.warn(`[CMS] Cannot fetch items for slug "${t}" without projectId`),[];return L.set(c,l),y?.set(c,l),l}catch(l){return console.error(`[CMS] Failed to fetch items for collection ${t}:`,l),[]}}function X(t){if(t==null)return null;if(typeof t=="number"&&!Number.isNaN(t))return t;if(typeof t=="string"){let e=t.trim();if(!e)return null;let n=Number(e);return Number.isNaN(n)?null:n}return null}function j(t){if(t==null)return null;if(t instanceof Date)return t.getTime();if(typeof t=="string"){let e=Date.parse(t);return Number.isNaN(e)?null:e}return null}function Y(t,e){if(t==null)return null;if(e==="number")return X(t);if(e==="date")return j(t);if(e)return String(t).toLowerCase();let n=X(t);if(n!==null)return n;let i=j(t);return i!==null?i:String(t).toLowerCase()}function It(t,e,n){if(t===null&&e===null)return 0;if(t===null)return 1;if(e===null)return-1;if(typeof t=="number"&&typeof e=="number")return n==="desc"?e-t:t-e;let i=String(t),c=String(e);return n==="desc"?c.localeCompare(i):i.localeCompare(c)}function Mt(t,e,n,i){let c=e.trim();return c?[...t].sort((l,s)=>{let r=Y(l.data?.[c],i),a=Y(s.data?.[c],i);return It(r,a,n)}):t}async function Tt(t,e,n=!1){let i=!1;y||(y=new Map);let c=t.querySelectorAll("[data-cms-loop]:not([data-cms-loop-expanded])");for(let l of c){let s=l.getAttribute("data-cms-loop");if(!s)continue;let r=l.firstElementChild;if(r)try{let a=await F(s,e,n),m=l.getAttribute("data-cms-loop-order"),d=l.getAttribute("data-cms-loop-direction")?.toLowerCase()==="desc"?"desc":"asc",o=l.getAttribute("data-cms-loop-order-type")?.toLowerCase()||"",u=m&&m.trim()?Mt(a,m,d,o):a;if(u.length===0){r.style.display="none",l.setAttribute("data-cms-loop-expanded","true"),l.setAttribute("data-cms-loop-template-hidden","true"),i=!0;continue}l.setAttribute("data-cms-loop-template",r.outerHTML);let p=[];for(let g=0;g<u.length;g++){let f=u[g],h=r.cloneNode(!0);kt(h,s,f);let b=f.data?.slug||f.id;h.setAttribute("data-cms-loop-item",b),g===0?h.setAttribute("data-cms-loop-template-item","true"):h.setAttribute("data-cms-loop-preview-item","true"),p.push(h)}for(;l.firstChild;)l.removeChild(l.firstChild);for(let g of p)l.appendChild(g);l.setAttribute("data-cms-loop-expanded","true"),i=!0}catch(a){console.error("Failed to expand CMS loop:",a)}}return i&&vt(t),i}function vt(t){let e=[".reveal-item:not(.reveal-active)",".fade-in:not(.is-visible)",".slide-in:not(.is-visible)",".animate-on-scroll:not(.animated)","[data-animate]:not(.animated)"],n=t.querySelectorAll(e.join(", "));if(n.length===0)return;let i=n.length,c=new IntersectionObserver((r,a)=>{r.forEach(m=>{if(m.isIntersecting){let d=m.target;d.classList.contains("reveal-item")&&d.classList.add("reveal-active"),(d.classList.contains("fade-in")||d.classList.contains("slide-in"))&&d.classList.add("is-visible"),(d.classList.contains("animate-on-scroll")||d.hasAttribute("data-animate"))&&d.classList.add("animated"),a.unobserve(d),i--,i<=0&&a.disconnect()}})},{root:null,rootMargin:"0px",threshold:.1});n.forEach(r=>c.observe(r));let l=setTimeout(()=>{i>0&&c.disconnect()},3e5),s=c.disconnect.bind(c);c.disconnect=()=>{clearTimeout(l),s()};try{t.dispatchEvent(new CustomEvent("cms-loop-expanded",{bubbles:!0}))}catch{}}function kt(t,e,n){let i=t.querySelectorAll("[data-cms-field], [data-cms-text-field], [data-cms-image-field], [data-cms-link-field]"),c=[t,...Array.from(i)];for(let r of c){let a=r.getAttribute("data-cms-field"),m=r.getAttribute("data-cms-type"),d=r.getAttribute("data-cms-collection");if(!a&&r.hasAttribute("data-cms-text-field")&&(a=r.getAttribute("data-cms-text-field"),m="text",d=r.getAttribute("data-cms-text-collection")),!a&&r.hasAttribute("data-cms-image-field")&&(a=r.getAttribute("data-cms-image-field"),m="image",d=r.getAttribute("data-cms-image-collection")),!a&&r.hasAttribute("data-cms-link-field")&&(a=r.getAttribute("data-cms-link-field"),m="link",d=r.getAttribute("data-cms-link-collection")),!a||d&&d!==e)continue;r.hasAttribute("data-cms-field")?r.setAttribute("data-cms-collection",e):r.hasAttribute("data-cms-text-field")?r.setAttribute("data-cms-text-collection",e):r.hasAttribute("data-cms-image-field")?r.setAttribute("data-cms-image-collection",e):r.hasAttribute("data-cms-link-field")&&r.setAttribute("data-cms-link-collection",e);let o=n.data?.[a];if(m==="text"){let u=o!=null?String(o):"";if(r.tagName.toLowerCase()==="iconify-icon")u?r.setAttribute("icon",u):r.removeAttribute("icon");else if(nt(u)){let p=H(u);r.innerHTML=p}else r.textContent=u}else if(m==="number"||m==="date"){if(o==null||o==="")continue;let u=String(o);D(r,u)}else if(m==="image"){let u=o!=null?String(o):"",p=u.match(/^bg-\[url\(['"]?(.+?)['"]?\)\]$/);if(p&&p[1]&&(u=p[1]),r.tagName==="IMG"){let g=r;u?g.src=u:(g.src="",g.removeAttribute("src"))}else{let g=r;u?g.style.backgroundImage=`url('${tt(u)}')`:g.style.backgroundImage=""}}else if(m==="link"){let u=o!=null?String(o):"";R(r,u)}else if(m==="icon"){let u=o!=null?String(o):"";r.tagName.toLowerCase()==="iconify-icon"&&(u?r.setAttribute("icon",u):r.removeAttribute("icon"))}else if(m==="richtext"){let u=o!=null?String(o):"",p=H(u);r.innerHTML=p}}let l=t.querySelectorAll("[data-cms-slug-link]"),s=t.hasAttribute("data-cms-slug-link")?[t,...Array.from(l)]:Array.from(l);for(let r of s){let a=r.getAttribute("data-cms-slug-link");if(!a||a!==e)continue;let m=n.data?.slug||n.id,d=`/${a}/${m}`;R(r,d)}}function $t(t){let e=!1,n=t.querySelectorAll("[data-cms-loop-expanded]");for(let i of n){if(i.hasAttribute("data-cms-loop-template-hidden")){let l=i.firstElementChild;l&&(l.style.display=""),e=!0}else{let l=i.querySelector("[data-cms-loop-item]");if(l){let s=l.cloneNode(!0);for(s.removeAttribute("data-cms-loop-item"),s.removeAttribute("data-cms-loop-template-item"),s.removeAttribute("data-cms-loop-preview-item"),Pt(s),s.style.pointerEvents="";i.firstChild;)i.removeChild(i.firstChild);i.appendChild(s),e=!0}else{let s=i.getAttribute("data-cms-loop-template");s&&(i.innerHTML=s,e=!0)}}i.removeAttribute("data-cms-loop-expanded"),i.removeAttribute("data-cms-loop-template"),i.removeAttribute("data-cms-loop-template-hidden")}return e}function Pt(t){let e=t.querySelectorAll("[data-cms-field], [data-cms-text-field], [data-cms-image-field], [data-cms-link-field]"),n=[t,...Array.from(e)];for(let i of n)i.removeAttribute("data-cms-item"),i.removeAttribute("data-cms-text-item"),i.removeAttribute("data-cms-image-item"),i.removeAttribute("data-cms-link-item")}async function Dt(t,e,n=!1){let i=y!==null;i||(y=new Map);try{let c=$t(t);return await Tt(t,e,n)||c}finally{i||(y=null)}}function _t(t){let e=t.match(/^bg-\[url\(['"]?(.+?)['"]?\)\]$/);return e&&e[1]?e[1]:t}function tt(t){return t.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\(/g,"\\(").replace(/\)/g,"\\)")}function D(t,e){t.tagName.toLowerCase()==="iconify-icon"?e?t.setAttribute("icon",e):t.removeAttribute("icon"):t.textContent=e}function Rt(t,e){let n=_t(e);t.tagName==="IMG"?t.src=n:t.style.backgroundImage=n?`url('${tt(n)}')`:""}function et(t){return t.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\n/g,"\\n").replace(/\r/g,"\\r")}function _(t){try{let e=new URL(t,window.location.origin);return(e.protocol==="http:"||e.protocol==="https:")&&e.origin!==window.location.origin}catch{return!1}}function R(t,e){if(t.tagName.toLowerCase()==="a")e?(t.setAttribute("href",e),_(e)?(t.setAttribute("target","_blank"),t.setAttribute("rel","noopener noreferrer")):(t.removeAttribute("target"),t.setAttribute("rel","noopener noreferrer"))):(t.removeAttribute("href"),t.removeAttribute("target"));else if(e){let n=et(e),i=_(e)?`window.open('${n}', '_blank', 'noopener,noreferrer')`:`window.location.href='${n}'`;t.setAttribute("onclick",i),t.getAttribute("role")||t.setAttribute("role","button");let c=t.getAttribute("class")||"";c.includes("cursor-pointer")||t.setAttribute("class",`${c} cursor-pointer`.trim())}else t.removeAttribute("onclick")}function Ht(t,e){t.tagName.toLowerCase()==="iconify-icon"&&(e?t.setAttribute("icon",e):t.removeAttribute("icon"))}function H(t){if(!t)return"";let n=new DOMParser().parseFromString(t,"text/html"),i=new Set(["p","br","strong","b","em","i","u","s","strike","a","ul","ol","li","h1","h2","h3","h4","h5","h6","blockquote","span","div","sub","sup"]),c=new Set(["p","div","blockquote","h1","h2","h3","h4","h5","h6"]),l={a:new Set(["href","target","rel"])};function s(d){if((d.textContent||"").trim().length>0)return!1;for(let u of Array.from(d.children))if(u.tagName.toLowerCase()!=="br"&&!s(u))return!1;return!0}function r(d){if(d.nodeType===Node.TEXT_NODE)return d.cloneNode(!0);if(d.nodeType!==Node.ELEMENT_NODE)return null;let o=d,u=o.tagName.toLowerCase();if(!i.has(u)){let f=document.createDocumentFragment();for(let h of Array.from(o.childNodes)){let b=r(h);b&&f.appendChild(b)}return f.childNodes.length>0?f:null}if(c.has(u)&&s(o))return null;let p=document.createElement(u),g=l[u]||new Set;for(let f of Array.from(o.attributes))if(g.has(f.name.toLowerCase())){let h=f.value;if(f.name.toLowerCase()==="href"){let b=h.toLowerCase().trim();if(b.startsWith("javascript:")||b.startsWith("data:"))continue}p.setAttribute(f.name,h)}if(u==="a"){p.setAttribute("rel","noopener noreferrer");let f=p.getAttribute("href")||"";_(f)?p.setAttribute("target","_blank"):p.removeAttribute("target")}for(let f of Array.from(o.childNodes)){let h=r(f);h&&p.appendChild(h)}return p}let a=document.createDocumentFragment();for(let d of Array.from(n.body.childNodes)){let o=r(d);o&&a.appendChild(o)}let m=document.createElement("div");return m.appendChild(a),m.innerHTML}function J(t,e){let n=H(e);t.innerHTML=n}function nt(t){return t?/<[a-z][\s\S]*>/i.test(t):!1}function it(t,e,n){if(e==="text")nt(n)?J(t,n):D(t,n);else if(e==="richtext")J(t,n);else if(e==="number"||e==="date"){if(!n)return;D(t,n)}else e==="image"?Rt(t,n):e==="link"?R(t,n):e==="icon"&&Ht(t,n)}async function Ft(t,e,n=!1){y||(y=new Map);let i=!1,c=t.querySelectorAll("[data-cms-item-slug]:not([data-cms-loop-item]), [data-cms-item]:not([data-cms-loop-item]), [data-cms-text-item-slug]:not([data-cms-loop-item]), [data-cms-text-item]:not([data-cms-loop-item]), [data-cms-image-item-slug]:not([data-cms-loop-item]), [data-cms-image-item]:not([data-cms-loop-item]), [data-cms-link-item-slug]:not([data-cms-loop-item]), [data-cms-link-item]:not([data-cms-loop-item])"),l=new Map;for(let s of c){if(s.closest("[data-cms-loop]"))continue;let r=null,a=null,m=!1,d=null,o=null;s.hasAttribute("data-cms-item-slug")||s.hasAttribute("data-cms-item")?(r=s.getAttribute("data-cms-collection"),a=s.getAttribute("data-cms-item-slug")||s.getAttribute("data-cms-item"),m=!s.hasAttribute("data-cms-item-slug")&&s.hasAttribute("data-cms-item"),d=s.getAttribute("data-cms-field"),o=s.getAttribute("data-cms-type")):s.hasAttribute("data-cms-text-item-slug")||s.hasAttribute("data-cms-text-item")?(r=s.getAttribute("data-cms-text-collection"),a=s.getAttribute("data-cms-text-item-slug")||s.getAttribute("data-cms-text-item"),m=!s.hasAttribute("data-cms-text-item-slug")&&s.hasAttribute("data-cms-text-item"),d=s.getAttribute("data-cms-text-field"),o="text"):s.hasAttribute("data-cms-image-item-slug")||s.hasAttribute("data-cms-image-item")?(r=s.getAttribute("data-cms-image-collection"),a=s.getAttribute("data-cms-image-item-slug")||s.getAttribute("data-cms-image-item"),m=!s.hasAttribute("data-cms-image-item-slug")&&s.hasAttribute("data-cms-image-item"),d=s.getAttribute("data-cms-image-field"),o="image"):(s.hasAttribute("data-cms-link-item-slug")||s.hasAttribute("data-cms-link-item"))&&(r=s.getAttribute("data-cms-link-collection"),a=s.getAttribute("data-cms-link-item-slug")||s.getAttribute("data-cms-link-item"),m=!s.hasAttribute("data-cms-link-item-slug")&&s.hasAttribute("data-cms-link-item"),d=s.getAttribute("data-cms-link-field"),o="link"),!(!r||!a||!d||!o)&&(l.has(r)||l.set(r,[]),l.get(r).push({el:s,itemSlug:a,isLegacyUUID:m,fieldSlug:d,bindingType:o}))}for(let[s,r]of l){let a=await F(s,e,n),m=new Map,d=new Map;for(let o of a){d.set(o.id,o);let u=o.data?.slug;u&&m.set(String(u).toLowerCase(),o)}for(let{el:o,itemSlug:u,isLegacyUUID:p,fieldSlug:g,bindingType:f}of r){let h;if(p?h=d.get(u):h=m.get(u.toLowerCase()),!h)continue;let b=h.data?.[g],C=b!=null?String(b):"";it(o,f,C),i=!0}}return i}async function Nt(t,e,n,i,c=!1){if(!e||!n||!i)return!1;y||(y=new Map);let l=await F(n,e,c),s=i.toLowerCase(),r=l.find(o=>o.data?.slug?.toLowerCase()===s);if(!r)return console.warn(`Dynamic page: Could not find item with slug "${i}" in collection "${n}"`),!1;let a=!1,m=t.querySelectorAll(`[data-cms-collection="${n}"][data-cms-field], [data-cms-link-collection="${n}"][data-cms-link-field]`);for(let o of m){if(o.closest("[data-cms-loop]"))continue;let u=null,p=null;if(o.hasAttribute("data-cms-field")?(u=o.getAttribute("data-cms-field"),p=o.getAttribute("data-cms-type")||"text"):o.hasAttribute("data-cms-link-field")&&(u=o.getAttribute("data-cms-link-field"),p="link"),!u)continue;let g=r.data?.[u],f=g!=null?String(g):"";it(o,p||"text",f),a=!0}let d=t.querySelectorAll(`[data-cms-slug-link="${n}"]`);for(let o of d){if(o.closest("[data-cms-loop]"))continue;let u=`/${n}/${r.data?.slug||r.id}`;if(o.tagName.toLowerCase()==="a")o.setAttribute("href",u);else{let g=`window.location.href='${et(u)}'`;o.setAttribute("onclick",g),o.getAttribute("role")||o.setAttribute("role","button");let f=o.getAttribute("class")||"";f.includes("cursor-pointer")||o.setAttribute("class",`${f} cursor-pointer`.trim())}a=!0}return a}async function st(t,e,n,i=!1){Lt(t);try{y=new Map;let c=await Dt(t,e,i),l=await Ft(t,e,i),s=!1;return n&&e&&(s=await Nt(t,e,n.collectionSlug,n.itemSlug,i)),c||l||s}finally{y=null,xt(t)}}var I=document.currentScript,ut=I.dataset.session,mt=I.dataset.parentOrigin,w=(t,e={})=>parent.postMessage({channel:"aura-published-v1",session:ut,type:t,...e},mt),dt,rt="",at=!1,S=!0,N=!1,ft=()=>{S||N||(N=!0,requestAnimationFrame(()=>{N=!1,S||w("scroll",{y:window.scrollY})}))};window.addEventListener("scroll",ft,{passive:!0});var Wt=t=>{if(!Number.isFinite(t)||t<0||t>1e7||t===0){S=!1,w("scroll-restored",{y:window.scrollY});return}S=!0;let e=()=>{let n=document.documentElement,i=n.style.scrollBehavior;n.style.scrollBehavior="auto",window.scrollTo(0,t),requestAnimationFrame(()=>{window.scrollTo(0,t),requestAnimationFrame(()=>{n.style.scrollBehavior=i,S=!1,w("scroll-restored",{y:window.scrollY}),ft()})})};document.readyState==="complete"?e():window.addEventListener("load",e,{once:!0})},ot=$(document,(t,e)=>w("navigate",{slug:t,itemSlug:e}),JSON.parse(I.dataset.dynamicPageSlugs||"[]"),I.dataset.parentUrl||window.location.href),Ot=0,M=new Map;G(t=>new Promise((e,n)=>{let i=++Ot,c=window.setTimeout(()=>{M.delete(i),document.documentElement.dataset.auraCmsState="error",w("error",{feature:"cms"}),n(new Error("Published CMS request timed out"))},15e3);M.set(i,{resolve:e,reject:n,timer:c}),w("cms",{requestId:i,collection:t})}));var W=t=>(t?.getAttribute("aria-label")||t?.textContent||t?.id||"").replace(/\s+/g," ").trim().slice(0,120),pt=t=>{let e=t?.getAttribute("data-aura-event")?.trim()||"";return/^[A-Za-z][A-Za-z0-9_:-]{0,99}$/.test(e)?e:null},x=t=>{dt?.tracking&&w("track",{payload:t,title:document.title.slice(0,300)})};document.addEventListener("click",t=>{let e=t.target instanceof Element?t.target:null;if(!e)return;let n=e.closest("[data-aura-event]"),i=pt(n);if(i){x({event:i,event_origin:"custom_element",element_label:W(n)});return}let c=e.closest("a[href]");if(c){x({event:"aura_link_click",link_text:W(c),link_url:c.href.slice(0,2048)});return}let l=e.closest('button,[role="button"],input[type="button"],input[type="submit"],input[type="reset"]');l&&x({event:"aura_button_click",element_label:W(l)})},!0);document.addEventListener("submit",t=>{let e=t.target;if(!(e instanceof HTMLFormElement))return;let n=pt(e);x(n?{event:n,event_origin:"custom_form",form_id:e.id.slice(0,120)}:{event:"aura_form_submit",form_id:e.id.slice(0,120),form_action:e.action.slice(0,2048),form_method:e.method})},!0);var lt=Promise.resolve();function Ut(t){let e=JSON.stringify(t);e!==rt&&(rt=e,dt=t,at||(at=!0,Wt(t.restoreScrollY)),ot(),ot=$(document,(n,i)=>w("navigate",{slug:n,itemSlug:i}),t.dynamicPageSlugs,t.parentUrl),document.documentElement.dataset.auraRuntime="ready",t.projectId&&(lt=lt.then(async()=>{Q(),document.documentElement.dataset.auraCmsState="loading",await st(document,t.projectId,t.dynamicContext,!0),document.documentElement.dataset.auraCmsState!=="error"&&(document.documentElement.dataset.auraCmsState="ready")}).catch(()=>{document.documentElement.dataset.auraCmsState="error",w("error",{feature:"cms"}),console.error("Aura published runtime: CMS refresh failed")})))}window.addEventListener("message",t=>{let e=t.data;if(!(t.source!==parent||t.origin!==mt||e?.channel!=="aura-published-v1"||e.session!==ut)&&(e.type==="configure"&&Ut(e.config),e.type==="cms-result")){let n=M.get(e.requestId);if(!n)return;clearTimeout(n.timer),M.delete(e.requestId),e.error?(document.documentElement.dataset.auraCmsState="error",console.error("Aura published runtime: CMS refresh failed"),w("error",{feature:"cms"}),n.reject(new Error("Published CMS request failed"))):n.resolve(e.items)}});function ct(){q(document),V(document),w("ready",{title:document.title.slice(0,300)})}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",ct,{once:!0}):ct();})();
+</script>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumaLoop — Prompt Music Lab</title>
+<meta name="description" content="A cinematic prompt-based music creation landing page with motion details and an animated generative layer.">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Orbitron:wght@500;600&display=swap" rel="stylesheet">
+</head>
+  <body class="min-h-screen overflow-x-hidden bg-neutral-950 text-cyan-50 antialiased selection:text-black selection:bg-cyan-100" style="font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background-image: linear-gradient(120deg, rgba(255,255,255,0.035) 0, rgba(255,255,255,0.035) 1px, transparent 1px, transparent 100%), radial-gradient(circle at 52% 38%, rgba(207,250,254,0.09), transparent 31%), linear-gradient(135deg, #171717 0%, #111111 42%, #1f1f2e 42%, #0f0f14 100%); background-size: 3.75rem 3.75rem, auto, auto;">
+    <main class="relative flex min-h-screen items-center justify-center px-3 py-6 sm:px-6 lg:px-10 flex-col">
+      
+      
+      
+
+      <header class="flex sm:px-6 shadow-black/80 transition-all duration-300 z-30 bg-black/60 w-full max-w-[92rem] border-cyan-100/10 border rounded-2xl mt-2 mb-8 pt-4 pr-6 pb-4 pl-6 relative shadow-lg backdrop-blur-md items-center justify-between">
+        <a href="#" class="brand-mark inline-flex items-center uppercase sm:text-3xl hover:text-orange-300 transition-colors text-2xl font-normal italic text-cyan-100 tracking-tight pr-2 pl-0" style="font-family: Orbitron, Inter, sans-serif; will-change: transform, opacity;" aria-label="LumaLoop home">
+          LUMALOOP
+        </a>
+        <nav aria-label="Primary navigation" class="hidden items-center gap-10 text-xs font-light uppercase tracking-wide text-cyan-50/90 md:flex lg:gap-14">
+          <a class="nav-link transition-colors duration-200 hover:text-orange-300 relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[1px] after:w-0 after:bg-orange-300 hover:after:w-full after:transition-all" href="#create" style="will-change: transform, opacity;">
+            Compose
+          </a>
+          <a class="nav-link transition-colors duration-200 hover:text-orange-300 relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[1px] after:w-0 after:bg-orange-300 hover:after:w-full after:transition-all" href="#library" style="will-change: transform, opacity;">
+            Catalog
+          </a>
+          <a class="nav-link transition-colors duration-200 hover:text-orange-300 relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[1px] after:w-0 after:bg-orange-300 hover:after:w-full after:transition-all" href="#workflow" style="will-change: transform, opacity;">
+            Flow
+          </a>
+          <a class="nav-link transition-colors duration-200 hover:text-orange-300 relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[1px] after:w-0 after:bg-orange-300 hover:after:w-full after:transition-all" href="#pricing" style="will-change: transform, opacity;">
+            Plans
+          </a>
+          <a class="nav-link transition-colors duration-200 hover:text-orange-300 relative py-1 after:absolute after:bottom-0 after:left-0 after:h-[1px] after:w-0 after:bg-orange-300 hover:after:w-full after:transition-all" href="#teams" style="will-change: transform, opacity;">
+            For teams
+          </a>
+        </nav>
+        <button type="button" aria-label="Open menu" class="menu-button inline-flex h-11 w-11 items-center justify-center rounded-full bg-cyan-100 text-black transition-all duration-200 hover:bg-orange-500 hover:scale-105 active:scale-95" style="will-change: transform, opacity;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-menu">
+            <line x1="4" x2="20" y1="12" y2="12"></line>
+            <line x1="4" x2="20" y1="6" y2="6"></line>
+            <line x1="4" x2="20" y1="18" y2="18"></line>
+          </svg>
+        </button>
+      </header>
+      <section aria-label="LumaLoop music generation hero" class="hero-shell overflow-hidden shadow-black/60 sm:rounded-[2.75rem] bg-black w-full max-w-[92rem] z-30 border-transparent border rounded-[2rem] relative shadow-2xl" style="min-height: min(72vw, 48rem); background: linear-gradient(#030303, #030303) padding-box, linear-gradient(135deg, rgba(207,250,254,0.18), rgba(249,115,22,0.28), rgba(207,250,254,0.06)) border-box;">
+        <div class="pointer-events-none absolute inset-0 z-0 opacity-80" aria-hidden="true">
+          <canvas id="webgl-canvas" class="absolute inset-0 h-full w-full" width="2860" height="1532"></canvas>
+          <div id="webgl-fallback" class="absolute inset-0 hidden" style="background: radial-gradient(circle at 48% 45%, rgba(207,250,254,0.16), transparent 26%), radial-gradient(circle at 76% 38%, rgba(207,250,254,0.12), transparent 20%), linear-gradient(110deg, transparent 0%, rgba(207,250,254,0.04) 45%, transparent 70%);"></div>
+        </div>
+
+        <div class="pointer-events-none absolute inset-0 z-10" aria-hidden="true" style="background-image: linear-gradient(135deg, rgba(207,250,254,0.08) 0, rgba(207,250,254,0.08) 1px, transparent 1px, transparent 100%); background-size: 3rem 3rem;"></div>
+
+        <div class="pointer-events-none absolute left-6 top-6 z-30 h-4 w-4 border-l border-t border-cyan-100/50 sm:left-8 sm:top-8"></div>
+        <div class="pointer-events-none absolute right-6 top-6 z-30 h-4 w-4 border-r border-t border-cyan-100/50 sm:right-8 sm:top-8"></div>
+        <div class="pointer-events-none absolute bottom-6 left-6 z-30 h-4 w-4 border-b border-l border-cyan-100/50 sm:bottom-8 sm:left-8"></div>
+        <div class="pointer-events-none absolute bottom-6 right-6 z-30 h-4 w-4 border-b border-r border-cyan-100/50 sm:bottom-8 sm:right-8"></div>
+
+        <div class="pointer-events-none absolute left-[14%] top-0 z-20 hidden h-full w-px bg-cyan-100/10 md:block" aria-hidden="true">
+          <span class="absolute -left-1 top-20 h-2 w-2 bg-cyan-100/60"></span>
+          <span class="absolute -left-1 bottom-24 h-2 w-2 bg-cyan-100/60"></span>
+        </div>
+        <div class="pointer-events-none absolute right-[14%] top-0 z-20 hidden h-full w-px bg-cyan-100/10 md:block" aria-hidden="true">
+          <span class="absolute -left-1 top-28 h-2 w-2 bg-cyan-100/60"></span>
+          <span class="absolute -left-1 bottom-20 h-2 w-2 bg-cyan-100/60"></span>
+        </div>
+
+        <div class="relative z-30 grid min-h-[42rem] grid-cols-1 px-6 pb-7 pt-8 sm:px-10 lg:grid-cols-12 lg:px-14 lg:pb-10 lg:pt-7">
+          <aside class="left-panel relative z-30 flex flex-col justify-between gap-8 lg:col-span-3">
+            <div class="trusted-block flex max-w-xs items-center gap-4" style="will-change: transform, opacity;">
+              <img src="media/man_blue.jpg" alt="Producer portrait" class="h-14 w-14 rounded-full object-cover ring-2 ring-cyan-100/20">
+              <p class="text-xs font-medium uppercase leading-snug text-cyan-50">
+                Trusted by 12,700+ documentarians, streamers, and post teams
+              </p>
+            </div>
+
+            <p class="intro-copy max-w-[13rem] text-xs font-light leading-relaxed text-cyan-50/70 sm:mt-8" style="will-change: transform, opacity;">
+              Write a sonic brief in everyday language and hear it unfold as a
+              polished cue with stems, rhythm, texture, and motion.
+            </p>
+
+            <div class="prompt-card relative mt-4 max-w-[16rem] rounded-[1.55rem] bg-cyan-100 p-5 text-black shadow-xl shadow-cyan-950/30 sm:mt-10" style="border: 1px solid transparent; background: linear-gradient(rgb(207,250,254), rgb(207,250,254)) padding-box, linear-gradient(135deg, rgba(255,255,255,0.34), rgba(207,250,254,0.22), rgba(0,0,0,0.12)) border-box;">
+              <h2 class="relative text-2xl font-medium uppercase leading-none tracking-tight sm:text-3xl" style="font-family: Orbitron, Inter, sans-serif;">
+                Cue on
+                <br>
+                command
+              </h2>
+              <div class="equalizer relative mt-4 grid w-32 grid-cols-9 gap-1" aria-hidden="true">
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 5px 5px;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-black" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 50% 100%;"></span>
+                <span class="eq-dot h-2.5 w-2.5 rounded-full bg-cyan-300" style="transform-origin: 5px 5px;"></span>
+              </div>
+            </div>
+
+            <div class="tags flex flex-wrap gap-2 pb-0 pt-1 text-xs font-normal uppercase text-cyan-50 lg:pb-2">
+              <span class="rounded-full border border-cyan-100/80 px-4 py-2" style="will-change: transform, opacity;">
+                Swift
+              </span>
+              <span class="rounded-full border border-cyan-100/80 px-4 py-2" style="will-change: transform, opacity;">
+                Bespoke
+              </span>
+              <span class="rounded-full border border-cyan-100/80 px-4 py-2" style="will-change: transform, opacity;">
+                Licensed
+              </span>
+              <span class="rounded-full border border-cyan-100/80 px-4 py-2" style="will-change: transform, opacity;">
+                Reactive
+              </span>
+              <span class="rounded-full border border-cyan-100/80 px-4 py-2" style="will-change: transform, opacity;">
+                Stem-safe
+              </span>
+            </div>
+          </aside>
+
+          <section class="stage relative z-20 mt-8 min-h-[36rem] lg:col-span-9 lg:mt-0">
+            <div class="mint-shape primary-shape absolute left-0 top-2 h-[38%] w-[84%] rounded-[1.7rem] bg-cyan-100 sm:rounded-[2rem] lg:left-[4%] lg:w-[86%]" style="clip-path: polygon(19% 0%, 98% 0%, 100% 8%, 82% 100%, 0% 100%, 0% 88%); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);"></div>
+            <div class="mint-shape lower-shape absolute bottom-[14%] left-[4%] h-[25%] w-[45%] rounded-[1.5rem] bg-cyan-100 sm:rounded-[1.8rem]" style="clip-path: polygon(20% 0%, 100% 0%, 82% 100%, 0% 100%, 0% 82%); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08);"></div>
+
+            <div class="compose-copy absolute right-[19%] top-[13%] z-30 hidden max-w-[14rem] text-sm font-medium uppercase leading-snug text-black md:block" style="will-change: transform, opacity;">
+              Compose scene-first — AI as your quiet studio partner
+            </div>
+
+            
+            <svg class="wave-line absolute right-[9%] top-[27%] z-30 hidden h-28 w-72 md:block" viewBox="0 0 288 112" fill="none" aria-hidden="true" style="will-change: transform, opacity">
+              <path d="M2 76 L38 8 L75 96 L106 44 L128 76 L165 76 L202 8 L238 76 L286 76" stroke="black" stroke-width="4" stroke-linejoin="round" style="stroke-dashoffset: 0px; stroke-dasharray: 511.1318;" class=""></path>
+            </svg><div class="instant-card z-40 flex gap-4 shadow-cyan-950/30 sm:w-[18rem] sm:rounded-[1.65rem] text-black bg-cyan-500 w-[17rem] rounded-[1.35rem] px-3 py-3 absolute top-[25%] right-0 shadow-xl gap-x-4 gap-y-4 items-center" style="will-change: transform, opacity;">
+              <div class="min-w-24">
+                <p class="text-xs font-medium uppercase leading-none">
+                  Instant cues
+                </p>
+                <p class="mt-1 text-4xl font-medium uppercase leading-none tracking-tight" style="font-family: Orbitron, Inter, sans-serif;">
+                  36
+                </p>
+              </div>
+              <div class="flex-1 rounded-2xl bg-black px-4 py-4 text-xs font-medium uppercase leading-snug text-cyan-50">
+                Sketch, refine, export in thirty seconds
+              </div>
+            </div>
+
+            <button type="button" aria-label="Play demo" class="play-button absolute left-[7%] top-[55%] z-50 inline-flex h-20 w-20 items-center justify-center rounded-full bg-black text-cyan-50 shadow-2xl shadow-black/40 transition hover:scale-105 sm:left-[8%] hover:bg-cyan-100" style="will-change: transform, opacity;">
+              <iconify-icon icon="solar:play-linear" class="text-3xl" stroke-width="1.5"></iconify-icon>
+            </button>
+
+            <img class="hero-figure absolute top-0 left-[24%] z-30 h-[44rem] max-h-none w-auto object-contain drop-shadow-2xl sm:left-[25%] lg:left-[2%]" src="media/hero_headphones.png" alt="Futuristic producer wearing studio headphones" style="clip-path: inset(0 0 0 0 round 0);">
+
+            <div class="headline z-50 uppercase leading-[0.92] sm:text-6xl lg:text-7xl text-4xl font-medium text-cyan-100 tracking-tight text-right max-w-[39rem] absolute right-[2%] bottom-[2%]" style="font-family: Orbitron, Inter, sans-serif; text-shadow: rgba(207, 250, 254, 0.12) 0px 0px 1.5rem">
+              <span class="headline-line block" style="will-change: transform, opacity; text-shadow: rgba(207, 250, 254, 0.12) 0px 0px 24px;">
+                Prompt.
+              </span>
+              <span class="headline-line block" style="will-change: transform, opacity; text-shadow: rgba(207, 250, 254, 0.12) 0px 0px 24px;">
+                Layer.
+              </span>
+              <span class="headline-line block" style="will-change: transform, opacity; text-shadow: rgba(207, 250, 254, 0.12) 0px 0px 24px;">
+                Deliver.
+              </span>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <section aria-label="Diagnostic workspace capabilities" class="flex flex-col overflow-hidden shadow-black/60 sm:rounded-[2.75rem] sm:px-10 lg:px-14 lg:pb-28 lg:pt-24 w-full max-w-[92rem] z-10 mr-auto ml-auto pt-24 pr-10 pb-28 pl-10 relative">
+      <div class="pointer-events-none absolute inset-0 z-0 opacity-80" aria-hidden="true" style="background: radial-gradient(circle at 48% 45%, rgba(207,250,254,0.12), transparent 40%), radial-gradient(circle at 76% 38%, rgba(249,115,22,0.06), transparent 30%);"></div>
+
+      <div class="pointer-events-none absolute inset-0 z-10" aria-hidden="true" style="background-image: linear-gradient(135deg, rgba(207,250,254,0.08) 0, rgba(207,250,254,0.08) 1px, transparent 1px, transparent 100%); background-size: 3rem 3rem;"></div>
+
+      <div class="pointer-events-none absolute left-6 top-6 z-30 h-4 w-4 border-l border-t border-cyan-100/50 sm:left-8 sm:top-8"></div>
+      <div class="pointer-events-none absolute right-6 top-6 z-30 h-4 w-4 border-r border-t border-cyan-100/50 sm:right-8 sm:top-8"></div>
+      <div class="pointer-events-none absolute bottom-6 left-6 z-30 h-4 w-4 border-b border-l border-cyan-100/50 sm:bottom-8 sm:left-8"></div>
+      <div class="pointer-events-none absolute bottom-6 right-6 z-30 h-4 w-4 border-b border-r border-cyan-100/50 sm:bottom-8 sm:right-8"></div>
+
+      <div class="relative z-20 flex items-center gap-2">
+        <span class="h-3 w-3 rounded-full border border-cyan-100/50 bg-cyan-100/15" style="box-shadow: 0 0 18px rgba(207,250,254,0.5), inset 0 1px 2px rgba(255,255,255,0.3);"></span>
+        <span class="text-xs font-normal uppercase tracking-[0.22rem] text-cyan-50/90">
+          Capabilities
+        </span>
+        <span class="h-3 w-3 rounded-full border border-cyan-100/50 bg-cyan-100/15" style="box-shadow: 0 0 18px rgba(207,250,254,0.5), inset 0 1px 2px rgba(255,255,255,0.3);"></span>
+      </div>
+
+      <h2 class="relative z-20 mt-6 max-w-5xl text-balance text-4xl font-normal uppercase leading-none tracking-tight text-cyan-50 sm:text-5xl md:text-6xl lg:text-7xl" style="font-family: Orbitron, Inter, sans-serif">
+        Everything your producers need to compose faster.
+      </h2>
+
+      <p class="relative z-20 mt-5 max-w-2xl text-sm font-light uppercase leading-relaxed text-cyan-50/70 sm:text-base">
+        A live diagnostic workspace for stem control, arrangement, mix policy,
+        and audio signals across every track.
+      </p>
+
+      <div class="relative z-20 mt-16 grid w-full grid-cols-1 gap-6 lg:mt-20 lg:grid-cols-12">
+        <article class="relative overflow-hidden rounded-[1.55rem] border border-transparent bg-black p-6 text-cyan-50 shadow-xl lg:col-span-8 lg:min-h-[28rem]" style="background: linear-gradient(rgba(10, 10, 10, 0.8), rgba(10, 10, 10, 0.8)) padding-box, linear-gradient(135deg, rgba(207, 250, 254, 0.25), rgba(249, 115, 22, 0.2), rgba(207, 250, 254, 0.05)) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/40"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/40"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/40"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/40"></div>
+
+          <div class="relative flex min-h-[17rem] items-center justify-center sm:min-h-[19rem]">
+            <div class="relative h-72 w-72 sm:h-80 sm:w-80">
+              <div class="absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-[2rem] border border-white/5 bg-neutral-950/80"></div>
+              <div class="absolute left-1/2 top-1/2 h-52 w-52 -translate-x-1/2 -translate-y-1/2 rounded-[1.55rem] border border-cyan-100/10 bg-black"></div>
+              <div class="absolute left-1/2 top-1/2 flex h-36 w-36 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-[1.35rem] border border-white/5 bg-neutral-950/90" style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 0 2rem rgba(207,250,254,0.08);">
+                <i data-lucide="bell-ring" class="h-12 w-12 text-cyan-50 drop-shadow-lg"></i>
+              </div>
+              <div class="absolute left-[4.1rem] top-[4.1rem] h-3 w-3 rounded-full bg-cyan-100" style="box-shadow: 0 0 1rem rgba(207,250,254,0.8);"></div>
+              <div class="absolute right-[4.1rem] top-[4.1rem] h-3 w-3 rounded-full bg-cyan-100" style="box-shadow: 0 0 1rem rgba(207,250,254,0.8);"></div>
+              <div class="absolute bottom-[4.1rem] left-[4.1rem] h-3 w-3 rounded-full bg-cyan-100" style="box-shadow: 0 0 1rem rgba(207,250,254,0.8);"></div>
+              <div class="absolute bottom-[4.1rem] right-[4.1rem] h-3 w-3 rounded-full bg-cyan-100" style="box-shadow: 0 0 1rem rgba(207,250,254,0.8);"></div>
+
+              <svg class="absolute inset-0 h-full w-full overflow-visible opacity-60" viewBox="0 0 320 320" fill="none" aria-hidden="true">
+                <g stroke="rgba(207,250,254,0.2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="">
+                  <path d="M78 112H38L20 94H10"></path>
+                  <path d="M78 140H32L18 126H3"></path>
+                  <path d="M78 180H34L18 196H6"></path>
+                  <path d="M78 208H42L24 226H12"></path>
+                  <path d="M242 112H282L300 94H310"></path>
+                  <path d="M242 140H288L302 126H317"></path>
+                  <path d="M242 180H286L302 196H314"></path>
+                  <path d="M242 208H278L296 226H308"></path>
+                  <path d="M112 242V284L94 302V314"></path>
+                  <path d="M140 242V292L126 306V318"></path>
+                  <path d="M180 242V288L196 304V316" class=""></path>
+                  <path d="M208 242V282L226 300V312" class=""></path>
+                </g>
+                <g fill="#020202" stroke="rgba(207,250,254,0.5)" stroke-width="2">
+                  <circle cx="10" cy="94" r="4"></circle>
+                  <circle cx="3" cy="126" r="4"></circle>
+                  <circle cx="6" cy="196" r="4"></circle>
+                  <circle cx="12" cy="226" r="4"></circle>
+                  <circle cx="310" cy="94" r="4"></circle>
+                  <circle cx="317" cy="126" r="4"></circle>
+                  <circle cx="314" cy="196" r="4"></circle>
+                  <circle cx="308" cy="226" r="4"></circle>
+                  <circle cx="94" cy="314" r="4"></circle>
+                  <circle cx="126" cy="318" r="4"></circle>
+                  <circle cx="196" cy="316" r="4"></circle>
+                  <circle cx="226" cy="312" r="4"></circle>
+                </g>
+              </svg>
+            </div>
+          </div>
+
+          <div class="relative mt-4 max-w-xl">
+            <div class="flex items-center gap-3">
+              <div class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-cyan-100/15 bg-cyan-100/10 text-cyan-100">
+                <i data-lucide="shield-alert" class="h-5 w-5"></i>
+              </div>
+              <h3 class="text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                Audio Engine & Stem Alerts
+              </h3>
+            </div>
+            <p class="mt-4 text-xs font-light uppercase leading-relaxed text-cyan-50/70">
+              Spot unusual frequency spikes, duplicate rhythms, and mix drift
+              before exporting the final cue.
+            </p>
+          </div>
+        </article>
+
+        <article class="relative overflow-hidden rounded-[1.55rem] border border-transparent bg-cyan-100 p-6 text-black shadow-xl shadow-cyan-950/30 lg:col-span-4 lg:min-h-[28rem]" style="background: linear-gradient(rgb(207, 250, 254), rgb(207, 250, 254)) padding-box, linear-gradient(135deg, rgba(255, 255, 255, 0.4), rgba(207, 250, 254, 0.2), rgba(0, 0, 0, 0.1)) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-black/20"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-black/20"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-black/20"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-black/20"></div>
+
+          <div class="relative flex min-h-[17rem] items-center justify-center sm:min-h-[19rem]">
+            <div class="relative h-60 w-60 rounded-[1.5rem] border border-black/10 bg-white/40 p-8 shadow-inner backdrop-blur-sm">
+              <span class="absolute left-5 top-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <span class="absolute right-5 top-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <span class="absolute bottom-5 left-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <span class="absolute bottom-5 right-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <div class="absolute inset-x-8 top-[5.15rem] h-16 bg-white/60 blur-xl"></div>
+              <div class="relative flex h-full items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5">
+                <div class="absolute left-0 top-1/2 h-px w-full bg-black/20" style="box-shadow: 0 0 8px rgba(0,0,0,0.1);"></div>
+                <div class="relative flex h-24 w-16 items-center justify-center rounded-b-md bg-black text-cyan-50 shadow-lg" style="clip-path: polygon(0 0, 31% 0, 38% 10%, 62% 10%, 69% 0, 100% 0, 100% 100%, 0 100%); border-top: 2px solid rgba(255,255,255,0.2);">
+                  <i data-lucide="music" class="h-8 w-8"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="relative mt-4">
+            <div class="flex items-center gap-3">
+              <div class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-black/5 text-black">
+                <i data-lucide="disc" class="h-5 w-5"></i>
+              </div>
+              <h3 class="text-xl font-normal uppercase tracking-tight text-black" style="font-family: Orbitron, Inter, sans-serif;">
+                Reference Capture
+              </h3>
+            </div>
+            <p class="mt-4 text-xs font-light uppercase leading-relaxed text-black/70">
+              Parse reference tracks, stems, and MIDI events into clean sessions
+              with genre confidence scoring.
+            </p>
+          </div>
+        </article>
+
+        <article class="relative overflow-hidden rounded-[1.55rem] border border-transparent bg-cyan-100 p-6 text-black shadow-xl shadow-cyan-950/30 lg:col-span-4 lg:min-h-[28rem]" style="background: linear-gradient(rgb(207, 250, 254), rgb(207, 250, 254)) padding-box, linear-gradient(135deg, rgba(255, 255, 255, 0.4), rgba(207, 250, 254, 0.2), rgba(0, 0, 0, 0.1)) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-black/20"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-black/20"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-black/20"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-black/20"></div>
+
+          <div class="relative flex min-h-[17rem] items-center justify-center sm:min-h-[19rem]">
+            <div class="relative h-60 w-60 rounded-[1.5rem] border border-black/10 bg-white/40 p-8 shadow-inner backdrop-blur-sm">
+              <span class="absolute left-5 top-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <span class="absolute right-5 top-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <span class="absolute bottom-5 left-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <span class="absolute bottom-5 right-5 h-3 w-3 rounded-full bg-black/80"></span>
+              <div class="relative flex h-full items-end justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 px-6 pb-6">
+                <div class="flex h-40 items-end gap-[0.35rem]">
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 28%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 44%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 58%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 84%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 52%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 38%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 50%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 76%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 46%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 35%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 56%;"></span>
+                  <span class="block w-2.5 rounded-t-[2px] bg-black shadow-md" style="height: 78%;"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="relative mt-4">
+            <div class="flex items-center gap-3">
+              <div class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-black/5 text-black">
+                <i data-lucide="bar-chart-2" class="w-[20px] h-[20px]" stroke-width="2" data-icon-replaced="true" style="color: rgb(0, 0, 0); width: 20px; height: 20px"></i>
+              </div>
+              <h3 class="text-xl font-normal uppercase tracking-tight text-black" style="font-family: Orbitron, Inter, sans-serif;">
+                Live Mix Analytics
+              </h3>
+            </div>
+            <p class="mt-4 text-xs font-light uppercase leading-relaxed text-black/70">
+              Track frequency movement, LUFS velocity, and dynamic variance from
+              one live master channel.
+            </p>
+          </div>
+        </article>
+
+        <article class="relative overflow-hidden rounded-[1.55rem] border border-transparent bg-black p-6 text-cyan-50 shadow-xl lg:col-span-8 lg:min-h-[28rem]" style="background: linear-gradient(rgba(10, 10, 10, 0.8), rgba(10, 10, 10, 0.8)) padding-box, linear-gradient(135deg, rgba(207, 250, 254, 0.25), rgba(249, 115, 22, 0.2), rgba(207, 250, 254, 0.05)) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/40"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/40"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/40"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/40"></div>
+
+          <div class="relative flex min-h-[17rem] items-center justify-center overflow-hidden sm:min-h-[19rem]">
+            <div class="relative h-72 w-full max-w-lg">
+              <div class="absolute left-1/2 top-8 h-56 w-[82%] -translate-x-1/2 rounded-[1.25rem] border border-white/5 bg-neutral-900/50" style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 2rem rgba(0,0,0,0.5);"></div>
+              <div class="absolute left-1/2 top-14 h-56 w-[72%] -translate-x-1/2 rounded-[1.25rem] border border-white/5 bg-neutral-900/80" style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 2rem rgba(0,0,0,0.6);"></div>
+              <div class="absolute left-1/2 top-24 h-40 w-[82%] max-w-sm -translate-x-1/2 rounded-xl border border-cyan-100/20 bg-neutral-800 p-6" style="background: linear-gradient(180deg, #1f1f1f, #0a0a0a); box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1.5rem 3rem rgba(0,0,0,0.8);">
+                <div class="flex items-center justify-between text-cyan-50">
+                  <i data-lucide="server" class="h-8 w-8"></i>
+                  <span class="text-xs font-normal tracking-[0.32rem] text-cyan-50/80">
+                    •••• •••• 7194
+                  </span>
+                </div>
+                <div class="mt-12 flex items-end justify-between">
+                  <div class="">
+                    <p class="text-xs font-normal uppercase text-cyan-50">
+                      Mira Keane
+                    </p>
+                    <p class="mt-1 text-xs font-light uppercase text-cyan-50/50">
+                      Session 04
+                    </p>
+                  </div>
+                  <p class="text-3xl font-normal uppercase tracking-tight text-cyan-100/40" style="font-family: Orbitron, Inter, sans-serif;">
+                    LUMA
+                  </p>
+                </div>
+                <div class="pointer-events-none absolute inset-x-0 top-0 h-8 opacity-20" style="background-image: radial-gradient(rgba(207,250,254,0.4) 1px, transparent 1px); background-size: 8px 8px;"></div>
+                <div class="pointer-events-none absolute inset-x-0 bottom-0 h-8 opacity-20" style="background-image: radial-gradient(rgba(207,250,254,0.4) 1px, transparent 1px); background-size: 8px 8px;"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="relative mt-4 max-w-xl">
+            <div class="flex items-center gap-3">
+              <div class="inline-flex h-9 w-9 items-center justify-center rounded-full border border-cyan-100/15 bg-cyan-100/10 text-cyan-100">
+                <i data-lucide="layers" class="h-5 w-5"></i>
+              </div>
+              <h3 class="text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                Adaptive Team Sessions
+              </h3>
+            </div>
+            <p class="mt-4 text-xs font-light uppercase leading-relaxed text-cyan-50/70">
+              Create sessions, bind plugin rules, cap track count by project,
+              and manage CPU exposure in real time.
+            </p>
+          </div>
+        </article>
+      </div>
+    </section>
+    <section class="relative mx-auto w-full max-w-[92rem] px-3 pb-10 sm:px-6 lg:px-10 z-10" aria-label="Diagnostic Workspace">
+      <div class="relative overflow-hidden rounded-[2rem] border border-transparent shadow-2xl z-10" style="background: linear-gradient(rgba(10, 10, 10, 0.8), rgba(10, 10, 10, 0.8)) padding-box, linear-gradient(135deg, rgba(207, 250, 254, 0.25), rgba(249, 115, 22, 0.2), rgba(207, 250, 254, 0.05)) border-box;">
+        <div class="pointer-events-none absolute inset-0 z-0 opacity-80" aria-hidden="true" style="background: radial-gradient(circle at 48% 45%, rgba(207,250,254,0.12), transparent 40%), radial-gradient(circle at 76% 38%, rgba(249,115,22,0.06), transparent 30%);"></div>
+        <div class="pointer-events-none absolute inset-0 z-10" aria-hidden="true" style="background-image: linear-gradient(135deg, rgba(207,250,254,0.08) 0, rgba(207,250,254,0.08) 1px, transparent 1px, transparent 100%); background-size: 3rem 3rem;"></div>
+
+        <div class="pointer-events-none absolute left-6 top-6 z-30 h-4 w-4 border-l border-t border-cyan-100/50 sm:left-8 sm:top-8"></div>
+        <div class="pointer-events-none absolute right-6 top-6 z-30 h-4 w-4 border-r border-t border-cyan-100/50 sm:right-8 sm:top-8"></div>
+        <div class="pointer-events-none absolute bottom-6 left-6 z-30 h-4 w-4 border-b border-l border-cyan-100/50 sm:bottom-8 sm:left-8"></div>
+        <div class="pointer-events-none absolute bottom-6 right-6 z-30 h-4 w-4 border-b border-r border-cyan-100/50 sm:bottom-8 sm:right-8"></div>
+
+        <header class="relative z-20 grid border-b border-cyan-100/10 lg:grid-cols-[1.1fr_0.9fr]">
+          <section class="relative min-h-[24rem] border-b border-cyan-100/10 px-5 py-6 sm:px-8 sm:py-8 lg:border-b-0 lg:border-r lg:border-cyan-100/10 lg:px-10 lg:py-10">
+            <div class="reveal flex flex-wrap items-center gap-2">
+              <div class="inline-flex items-center gap-2 rounded-full border border-cyan-100/15 bg-cyan-100/5 px-3 py-1.5 shadow-[0_0_12px_rgba(207,250,254,0.1)]">
+                <span class="flex h-5 w-5 items-center justify-center text-cyan-50/70">
+                  <i data-lucide="activity" class="h-4 w-4 text-cyan-50/70"></i>
+                </span>
+                <span class="text-xs font-extralight uppercase tracking-[0.22rem] text-cyan-50/70">
+                  Workspace / Session-04
+                </span>
+              </div>
+              <div class="inline-flex items-center gap-2 rounded-full border border-cyan-100/15 bg-cyan-100/5 px-3 py-1.5 shadow-[0_0_12px_rgba(207,250,254,0.1)]">
+                <span class="h-1.5 w-1.5 rounded-full bg-cyan-100" style="box-shadow: 0 0 8px rgba(207,250,254,0.8);"></span>
+                <span class="text-xs font-extralight uppercase text-cyan-50/70">
+                  Live Sync
+                </span>
+              </div>
+            </div>
+
+            <div class="mt-12 max-w-2xl">
+              <p class="reveal text-xs font-extralight uppercase tracking-[0.28rem] text-cyan-50/50">
+                Arrangement Diagnostic
+              </p>
+              <h1 class="reveal mt-4 text-4xl font-thin uppercase tracking-tight text-cyan-50 sm:text-5xl lg:text-6xl" style="font-family: Orbitron, Inter, sans-serif;">
+                Stem Generation Core
+              </h1>
+              <p class="reveal mt-5 max-w-xl text-sm font-extralight uppercase leading-relaxed text-cyan-50/60 sm:text-base">
+                A minimalist diagnostic view for inspecting audio pathways,
+                arrangement layers, stem channels, and generation events across
+                your active timeline.
+              </p>
+            </div>
+
+            <div class="reveal mt-12 grid max-w-2xl grid-cols-2 gap-8 sm:grid-cols-4">
+              <div class="border-l border-cyan-100/20 pl-4">
+                <p class="text-xs font-extralight uppercase tracking-[0.18rem] text-cyan-50/50">
+                  Stems
+                </p>
+                <p class="mt-2 text-2xl font-extralight uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                  24
+                </p>
+              </div>
+              <div class="border-l border-cyan-100/20 pl-4">
+                <p class="text-xs font-extralight uppercase tracking-[0.18rem] text-cyan-50/50">
+                  Latency
+                </p>
+                <p class="mt-2 text-2xl font-extralight uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                  12ms
+                </p>
+              </div>
+              <div class="border-l border-cyan-100/20 pl-4">
+                <p class="text-xs font-extralight uppercase tracking-[0.18rem] text-cyan-50/50">
+                  Tracks
+                </p>
+                <p class="mt-2 text-2xl font-extralight uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                  8
+                </p>
+              </div>
+              <div class="border-l border-cyan-100/20 pl-4">
+                <p class="text-xs font-extralight uppercase tracking-[0.18rem] text-cyan-50/50">
+                  Fidelity
+                </p>
+                <p class="mt-2 text-2xl font-extralight uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                  99.9%
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <aside class="relative flex min-h-[24rem] flex-col px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
+            <div class="reveal flex items-center justify-between gap-4 border-b border-cyan-100/10 pb-6">
+              <div>
+                <p class="text-xs font-extralight uppercase tracking-[0.22rem] text-cyan-50/50">
+                  Active Pipeline
+                </p>
+                <h2 class="mt-2 text-xl font-thin uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                  Generation Sequence
+                </h2>
+              </div>
+              <div class="flex h-10 w-10 items-center justify-center rounded-full border border-cyan-100/15 bg-cyan-100/10 text-cyan-100" style="box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 0 1rem rgba(207,250,254,0.08);">
+                <i data-lucide="music" class="h-8 w-8"></i>
+              </div>
+            </div>
+
+            <div class="reveal mt-8 flex flex-col gap-5">
+              <div class="flex items-center gap-4">
+                <span class="w-12 text-xs font-extralight uppercase tracking-widest text-cyan-50/50">
+                  DRM
+                </span>
+                <div class="relative flex h-8 flex-1 items-center gap-1 overflow-hidden rounded-md border border-cyan-100/10 bg-black/50 px-2 shadow-inner">
+                  <div class="h-1.5 w-[30%] rounded-full bg-cyan-100/60" style="box-shadow: 0 0 8px rgba(207,250,254,0.4);"></div>
+                  <div class="h-1.5 w-[15%] rounded-full bg-cyan-100/40"></div>
+                  <div class="h-1.5 w-[40%] rounded-full bg-cyan-100/20"></div>
+                </div>
+                <span class="w-12 text-right text-xs font-extralight uppercase text-cyan-50/70">
+                  100%
+                </span>
+              </div>
+              <div class="flex items-center gap-4">
+                <span class="w-12 text-xs font-extralight uppercase tracking-widest text-cyan-50/50">
+                  BSS
+                </span>
+                <div class="relative flex h-8 flex-1 items-center gap-1 overflow-hidden rounded-md border border-cyan-100/10 bg-black/50 px-2 shadow-inner">
+                  <div class="h-1.5 w-[45%] rounded-full bg-cyan-100/60" style="box-shadow: 0 0 8px rgba(207,250,254,0.4);"></div>
+                  <div class="h-1.5 w-[25%] rounded-full bg-cyan-100/20"></div>
+                </div>
+                <span class="w-12 text-right text-xs font-extralight uppercase text-cyan-50/70">
+                  100%
+                </span>
+              </div>
+              <div class="flex items-center gap-4">
+                <span class="w-12 text-xs font-extralight uppercase tracking-widest text-cyan-50/50">
+                  SYN
+                </span>
+                <div class="relative flex h-8 flex-1 items-center gap-1 overflow-hidden rounded-md border border-cyan-100/10 bg-black/50 px-2 shadow-inner">
+                  <div class="h-1.5 w-[20%] rounded-full bg-orange-400/60" style="box-shadow: 0 0 8px rgba(249,115,22,0.4);"></div>
+                  <div class="h-1.5 w-[50%] rounded-full bg-cyan-100/20"></div>
+                </div>
+                <span class="w-12 text-right text-xs font-extralight uppercase text-cyan-50/70">
+                  72%
+                </span>
+              </div>
+              <div class="flex items-center gap-4">
+                <span class="w-12 text-xs font-extralight uppercase tracking-widest text-cyan-50/50">
+                  VOX
+                </span>
+                <div class="relative flex h-8 flex-1 items-center gap-1 overflow-hidden rounded-md border border-cyan-100/10 bg-black/50 px-2 shadow-inner">
+                  <div class="h-1.5 w-[10%] rounded-full bg-orange-400/60" style="box-shadow: 0 0 8px rgba(249,115,22,0.4);"></div>
+                  <div class="h-1.5 w-[80%] rounded-full bg-black/40"></div>
+                </div>
+                <span class="w-12 text-right text-xs font-extralight uppercase text-cyan-50/70">
+                  14%
+                </span>
+              </div>
+            </div>
+
+            <div class="mt-auto pt-8">
+              <div class="reveal rounded-xl border border-cyan-100/10 bg-black/40 p-5 shadow-inner">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <p class="text-xs font-extralight uppercase tracking-[0.15rem] text-cyan-50/50">
+                      Render Target
+                    </p>
+                    <p class="mt-1 text-sm font-extralight uppercase text-cyan-50/80">
+                      Uncompressed WAV / 48kHz
+                    </p>
+                  </div>
+                  <span class="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-100/15 bg-cyan-100/10 text-cyan-100">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" data-lucide="headphones" aria-hidden="true" class="lucide lucide-headphones h-4 w-4"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"></path></svg>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </header>
+
+        <div class="relative z-20 border-b border-cyan-100/10 p-5 sm:p-8 lg:px-10">
+          <div class="reveal max-w-3xl">
+            <p class="text-xs font-extralight uppercase tracking-[0.22rem] text-cyan-50/50">
+              Inspection Note
+            </p>
+            <h2 class="mt-3 text-2xl font-thin uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+              Arrangement Health
+            </h2>
+            <p class="mt-4 text-sm font-extralight uppercase leading-relaxed text-cyan-50/70">
+              The composition engine is operating within tolerance. Two
+              secondary stems were regenerated after structural pressure crossed
+              the complexity threshold. Ready for export.
+            </p>
+            <button type="button" class="mt-6 inline-flex items-center gap-2 rounded-full border border-cyan-100/20 bg-cyan-100/10 px-5 py-2.5 text-sm font-extralight uppercase text-cyan-50 transition-all duration-300 hover:bg-cyan-100 hover:text-black hover:scale-105 active:scale-95">
+              Open timeline
+              <i data-lucide="arrow-right" class="h-4 w-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <footer class="relative z-20 flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
+          <div class="flex items-center gap-3">
+            <span class="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-100/15 bg-cyan-100/10 text-cyan-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),_0_0_1rem_rgba(207,250,254,0.08)]">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" data-lucide="audio-lines" aria-hidden="true" class="lucide lucide-audio-lines h-4 w-4"><path d="M2 10v3"></path><path d="M6 6v11"></path><path d="M10 3v18"></path><path d="M14 8v7"></path><path d="M18 5v13"></path><path d="M22 10v3"></path></svg>
+            </span>
+            <div>
+              <p class="text-sm font-extralight uppercase text-cyan-50/90">
+                LumaLoop Console
+              </p>
+              <p class="text-xs font-extralight uppercase text-cyan-50/50">
+                Project ID: LMA-88-Delta
+              </p>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="rounded-md border border-cyan-100/10 bg-black/40 px-3 py-1.5 text-xs font-extralight uppercase text-cyan-50/60 shadow-inner">
+              BPM 120
+            </span>
+            <span class="rounded-md border border-cyan-100/10 bg-black/40 px-3 py-1.5 text-xs font-extralight uppercase text-cyan-50/60 shadow-inner">
+              Key C Min
+            </span>
+            <span class="rounded-md border border-cyan-100/10 bg-black/40 px-3 py-1.5 text-xs font-extralight uppercase text-cyan-50/60 shadow-inner">
+              Quantize 1/16
+            </span>
+          </div>
+        </footer>
+      </div>
+
+      <script src="https://unpkg.com/lucide@latest"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+
+      <script>
+        (function () {
+          function init() {
+            if (typeof lucide !== "undefined") {
+              lucide.createIcons();
+            }
+
+            if (typeof gsap !== "undefined" && typeof ScrollTrigger !== "undefined") {
+              gsap.registerPlugin(ScrollTrigger);
+
+              gsap.from(".reveal", {
+                opacity: 0,
+                y: 18,
+                duration: 0.9,
+                ease: "power3.out",
+                stagger: 0.07,
+                scrollTrigger: {
+                  trigger: ".reveal",
+                  start: "top 90%",
+                }
+              });
+            }
+          }
+
+          if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", init);
+          } else {
+            setTimeout(init, 100);
+          }
+        })();
+      </script>
+    </section>
+    <section aria-label="Integration and Workflow" class="relative mx-auto flex max-w-[92rem] flex-col items-center gap-12 px-3 py-20 sm:px-6 lg:px-10 lg:py-32 z-10">
+      <div class="pointer-events-none absolute inset-0 z-0 flex justify-center" aria-hidden="true">
+        <div class="h-full w-full max-w-4xl bg-cyan-400/5 blur-[120px] rounded-[100%]"></div>
+      </div>
+
+      <div class="relative z-10 w-full text-center max-w-3xl mx-auto">
+        <div class="flex items-center justify-center gap-2 mb-6">
+          <span class="h-2 w-2 rounded-full border border-cyan-100/50 bg-cyan-100/20" style="box-shadow: 0 0 12px rgba(207,250,254,0.5);"></span>
+          <span class="text-xs font-normal uppercase tracking-[0.22rem] text-cyan-50/70">
+            Seamless Pipeline
+          </span>
+          <span class="h-2 w-2 rounded-full border border-cyan-100/50 bg-cyan-100/20" style="box-shadow: 0 0 12px rgba(207,250,254,0.5);"></span>
+        </div>
+
+        <h2 class="mt-4 text-4xl font-normal uppercase leading-none tracking-tight text-cyan-50 sm:text-5xl md:text-6xl text-balance" style="font-family: Orbitron, Inter, sans-serif;">
+          From text to timeline in seconds.
+        </h2>
+        <p class="mx-auto mt-6 max-w-2xl text-sm font-light uppercase leading-relaxed text-cyan-50/60 sm:text-base">
+          Integrate directly with your favorite DAWs. Drag and drop generated
+          cues, stems, and MIDI sequences straight into your arrangement window.
+        </p>
+      </div>
+
+      <div class="relative z-10 mt-10 grid w-full grid-cols-1 gap-6 md:grid-cols-3">
+        <div class="hidden md:block absolute top-[4.5rem] left-[16%] right-[16%] h-[1px] bg-gradient-to-r from-transparent via-cyan-100/20 to-transparent z-0"></div>
+
+        <div class="relative z-10 flex flex-col items-center rounded-[1.55rem] border border-transparent bg-black/60 p-8 shadow-2xl backdrop-blur-md" style="background: linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.9)) padding-box, linear-gradient(135deg, rgba(207,250,254,0.2), rgba(207,250,254,0.05), transparent) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/30"></div>
+
+          <div class="flex h-20 w-20 items-center justify-center rounded-[1.25rem] border border-cyan-100/15 bg-neutral-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),_0_0_1.5rem_rgba(207,250,254,0.08)] text-cyan-100">
+            <i data-lucide="terminal" class="h-8 w-8"></i>
+          </div>
+          <h3 class="mt-8 text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+            1. Prompt
+          </h3>
+          <p class="mt-4 text-center text-xs font-light uppercase leading-relaxed text-cyan-50/60">
+            Describe the emotional arc, tempo, and instrumentation using natural
+            language or structured tags.
+          </p>
+        </div>
+
+        <div class="relative z-10 flex flex-col items-center rounded-[1.55rem] border border-transparent bg-black/60 p-8 shadow-2xl backdrop-blur-md" style="background: linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.9)) padding-box, linear-gradient(135deg, rgba(207,250,254,0.2), rgba(207,250,254,0.05), transparent) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/30"></div>
+
+          <div class="flex h-20 w-20 items-center justify-center rounded-[1.25rem] border border-cyan-100/15 bg-neutral-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),_0_0_1.5rem_rgba(207,250,254,0.08)] text-cyan-100">
+            <i data-lucide="sliders-horizontal" class="h-8 w-8"></i>
+          </div>
+          <h3 class="mt-8 text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+            2. Shape
+          </h3>
+          <p class="mt-4 text-center text-xs font-light uppercase leading-relaxed text-cyan-50/60">
+            Preview multiple variations. Adjust intensity, swap stems, or
+            regenerate specific 8-bar loops instantly.
+          </p>
+        </div>
+
+        <div class="relative z-10 flex flex-col items-center rounded-[1.55rem] border border-transparent bg-black/60 p-8 shadow-2xl backdrop-blur-md" style="background: linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.9)) padding-box, linear-gradient(135deg, rgba(207,250,254,0.2), rgba(207,250,254,0.05), transparent) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/30"></div>
+
+          <div class="flex h-20 w-20 items-center justify-center rounded-[1.25rem] border border-cyan-100/15 bg-neutral-950 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),_0_0_1.5rem_rgba(207,250,254,0.08)] text-cyan-100">
+            <i data-lucide="hard-drive-download" class="h-8 w-8"></i>
+          </div>
+          <h3 class="mt-8 text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+            3. Export
+          </h3>
+          <p class="mt-4 text-center text-xs font-light uppercase leading-relaxed text-cyan-50/60">
+            Drag full mixes, wet/dry stems, and MIDI data directly into Pro
+            Tools, Logic, Ableton, or Premiere.
+          </p>
+        </div>
+      </div>
+
+      <div class="relative z-10 mt-16 flex w-full flex-col items-center justify-center gap-6 border-t border-cyan-100/10 pt-12 sm:flex-row sm:gap-12">
+        <p class="text-xs font-normal uppercase tracking-[0.2rem] text-cyan-50/50">
+          Native Export Destinations
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-8 text-cyan-50/30">
+          <div class="flex items-center gap-2 transition hover:text-cyan-100/80">
+            <i data-lucide="box" class="h-5 w-5"></i>
+            <span class="text-xs font-normal uppercase">Pro Tools</span>
+          </div>
+          <div class="flex items-center gap-2 transition hover:text-cyan-100/80">
+            <i data-lucide="layers" class="h-5 w-5"></i>
+            <span class="text-xs font-normal uppercase">Logic Pro</span>
+          </div>
+          <div class="flex items-center gap-2 transition hover:text-cyan-100/80">
+            <i data-lucide="monitor-speaker" class="h-5 w-5"></i>
+            <span class="text-xs font-normal uppercase">Ableton Live</span>
+          </div>
+          <div class="flex items-center gap-2 transition hover:text-cyan-100/80">
+            <i data-lucide="film" class="h-5 w-5"></i>
+            <span class="text-xs font-normal uppercase">Premiere</span>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section aria-label="Producer Testimonials" class="relative mx-auto flex max-w-[92rem] flex-col items-center gap-12 px-3 py-20 sm:px-6 lg:px-10 lg:py-24 z-10">
+      <div class="pointer-events-none absolute inset-0 z-0 flex justify-center" aria-hidden="true">
+        <div class="h-full w-full max-w-5xl bg-orange-500/5 blur-[120px] rounded-[100%]"></div>
+      </div>
+
+      <div class="relative z-10 w-full text-center max-w-3xl mx-auto">
+        <div class="flex items-center justify-center gap-2 mb-6">
+          <span class="h-2 w-2 rounded-full border border-orange-200/50 bg-orange-200/20" style="box-shadow: 0 0 12px rgba(251,146,60,0.5);"></span>
+          <span class="text-xs font-normal uppercase tracking-[0.22rem] text-cyan-50/70">
+            Studio Feedback
+          </span>
+          <span class="h-2 w-2 rounded-full border border-orange-200/50 bg-orange-200/20" style="box-shadow: 0 0 12px rgba(251,146,60,0.5);"></span>
+        </div>
+
+        <h2 class="mt-4 text-4xl font-normal uppercase leading-none tracking-tight text-cyan-50 sm:text-5xl md:text-6xl text-balance" style="font-family: Orbitron, Inter, sans-serif;">
+          Soundtracks forged by pros.
+        </h2>
+        <p class="mx-auto mt-6 max-w-2xl text-sm font-light uppercase leading-relaxed text-cyan-50/60 sm:text-base">
+          See how top composers, audio directors, and post-production teams use
+          LumaLoop to scale their scoring pipeline without compromising on
+          fidelity.
+        </p>
+      </div>
+
+      <div class="relative z-10 mt-10 grid w-full grid-cols-1 gap-6 md:grid-cols-3">
+        <!-- Testimonial 1 -->
+        <article class="relative z-10 flex flex-col justify-between overflow-hidden rounded-[1.55rem] border border-transparent bg-black/60 p-8 shadow-2xl backdrop-blur-md transition-all hover:bg-black/80" style="background: linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.9)) padding-box, linear-gradient(135deg, rgba(207,250,254,0.15), rgba(207,250,254,0.02), transparent) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/30"></div>
+          <i data-lucide="quote" class="absolute right-8 top-8 h-10 w-10 text-cyan-100/5" aria-hidden="true"></i>
+
+          <div class="relative z-10">
+            <div class="flex gap-1.5 mb-6 text-orange-400">
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+            </div>
+            <p class="text-xs font-light uppercase leading-relaxed text-cyan-50/80 sm:text-sm">
+              "LumaLoop completely changed our post-production pipeline. What
+              used to take three days of temp-scoring now takes four hours, and
+              the exported stems drop flawlessly into Pro Tools."
+            </p>
+          </div>
+
+          <div class="relative z-10 mt-10 flex items-center gap-4 border-t border-cyan-100/10 pt-6">
+            <div class="relative h-12 w-12 overflow-hidden rounded-full border border-cyan-100/20 bg-neutral-900">
+              <img src="media/avatar_art.jpg" alt="Sarah Jenkins" class="h-full w-full object-cover grayscale transition hover:grayscale-0">
+            </div>
+            <div>
+              <h4 class="text-xs font-normal uppercase tracking-wide text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                Sarah Jenkins
+              </h4>
+              <p class="text-[0.65rem] font-light uppercase tracking-wider text-cyan-50/50">
+                Lead Composer, A24
+              </p>
+            </div>
+          </div>
+        </article>
+
+        <!-- Testimonial 2 -->
+        <article class="relative z-10 flex flex-col justify-between overflow-hidden rounded-[1.55rem] border border-transparent bg-black/60 p-8 shadow-2xl backdrop-blur-md transition-all hover:bg-black/80" style="background: linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.9)) padding-box, linear-gradient(135deg, rgba(207,250,254,0.15), rgba(207,250,254,0.02), transparent) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/30"></div>
+          <i data-lucide="quote" class="absolute right-8 top-8 h-10 w-10 text-cyan-100/5" aria-hidden="true"></i>
+
+          <div class="relative z-10">
+            <div class="flex gap-1.5 mb-6 text-orange-400">
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+            </div>
+            <p class="text-xs font-light uppercase leading-relaxed text-cyan-50/80 sm:text-sm">
+              "The ability to prompt for emotional arcs and instantly receive a
+              32-bar cue with separated stems is simply magic. It's not just a
+              toy, it's a diagnostic workspace for serious arrangements."
+            </p>
+          </div>
+
+          <div class="relative z-10 mt-10 flex items-center gap-4 border-t border-cyan-100/10 pt-6">
+            <div class="relative h-12 w-12 overflow-hidden rounded-full border border-cyan-100/20 bg-neutral-900">
+              <img src="media/avatar_blazer.jpg" alt="David Miller" class="h-full w-full object-cover grayscale transition hover:grayscale-0">
+            </div>
+            <div>
+              <h4 class="text-xs font-normal uppercase tracking-wide text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                David Miller
+              </h4>
+              <p class="text-[0.65rem] font-light uppercase tracking-wider text-cyan-50/50">
+                Audio Director, Riot
+              </p>
+            </div>
+          </div>
+        </article>
+
+        <!-- Testimonial 3 -->
+        <article class="relative z-10 flex flex-col justify-between overflow-hidden rounded-[1.55rem] border border-transparent bg-black/60 p-8 shadow-2xl backdrop-blur-md transition-all hover:bg-black/80" style="background: linear-gradient(rgba(10,10,10,0.7), rgba(10,10,10,0.9)) padding-box, linear-gradient(135deg, rgba(207,250,254,0.15), rgba(207,250,254,0.02), transparent) border-box;">
+          <div class="pointer-events-none absolute left-4 top-4 h-3 w-3 border-l border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute right-4 top-4 h-3 w-3 border-r border-t border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 left-4 h-3 w-3 border-b border-l border-cyan-100/30"></div>
+          <div class="pointer-events-none absolute bottom-4 right-4 h-3 w-3 border-b border-r border-cyan-100/30"></div>
+          <i data-lucide="quote" class="absolute right-8 top-8 h-10 w-10 text-cyan-100/5" aria-hidden="true"></i>
+
+          <div class="relative z-10">
+            <div class="flex gap-1.5 mb-6 text-orange-400">
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+              <i data-lucide="star" class="h-4 w-4 fill-current"></i>
+            </div>
+            <p class="text-xs font-light uppercase leading-relaxed text-cyan-50/80 sm:text-sm">
+              "I was skeptical of generative ai for scoring, but LumaLoop is
+              different. The mix analytics and the native Ableton exports make
+              it a natural extension of my current studio rig."
+            </p>
+          </div>
+
+          <div class="relative z-10 mt-10 flex items-center gap-4 border-t border-cyan-100/10 pt-6">
+            <div class="relative h-12 w-12 overflow-hidden rounded-full border border-cyan-100/20 bg-neutral-900">
+              <img src="media/avatar_woman.jpg" alt="Elena Rostova" class="h-full w-full object-cover grayscale transition hover:grayscale-0">
+            </div>
+            <div>
+              <h4 class="text-xs font-normal uppercase tracking-wide text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+                Elena Rostova
+              </h4>
+              <p class="text-[0.65rem] font-light uppercase tracking-wider text-cyan-50/50">
+                Independent Producer
+              </p>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+    <section id="pricing" class="relative mx-auto flex max-w-[92rem] flex-col items-center gap-12 px-3 py-20 sm:px-6 lg:px-10 lg:py-24 z-10" aria-label="Pricing Plans">
+      <div class="relative z-10 w-full text-center max-w-3xl mx-auto">
+        <div class="flex items-center justify-center gap-2 mb-6">
+          <span class="h-2 w-2 rounded-full border border-cyan-100/50 bg-cyan-100/20" style="box-shadow: 0 0 12px rgba(207,250,254,0.5);"></span>
+          <span class="text-xs font-normal uppercase tracking-[0.22rem] text-cyan-50/70">
+            Plans
+          </span>
+          <span class="h-2 w-2 rounded-full border border-cyan-100/50 bg-cyan-100/20" style="box-shadow: 0 0 12px rgba(207,250,254,0.5);"></span>
+        </div>
+        <h2 class="mt-4 text-4xl font-normal uppercase leading-none tracking-tight text-cyan-50 sm:text-5xl md:text-6xl text-balance" style="font-family: Orbitron, Inter, sans-serif;">
+          Scale your audio pipeline.
+        </h2>
+        <p class="mx-auto mt-6 max-w-2xl text-sm font-light uppercase leading-relaxed text-cyan-50/60 sm:text-base">
+          Transparent pricing for studios of all sizes. From solo producers to
+          enterprise post-houses.
+        </p>
+      </div>
+
+      <div class="relative z-10 mt-10 grid w-full grid-cols-1 gap-6 md:grid-cols-3">
+        <div class="relative flex flex-col rounded-[1.55rem] border border-cyan-100/10 bg-black/60 p-8 shadow-xl backdrop-blur-md">
+          <h3 class="text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+            Creator
+          </h3>
+          <div class="mt-4 flex items-baseline text-cyan-50">
+            <span class="text-4xl font-normal tracking-tight" style="font-family: Orbitron, Inter, sans-serif;">
+              $19
+            </span>
+            <span class="ml-1 text-xs font-light uppercase text-cyan-50/50">
+              /month
+            </span>
+          </div>
+          <p class="mt-4 text-xs font-light uppercase leading-relaxed text-cyan-50/70">
+            For independent creators and solo devs.
+          </p>
+          <ul class="mt-8 flex flex-1 flex-col gap-4 text-xs font-light uppercase text-cyan-50/80">
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              100 generations/mo
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              Standard stems
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              MP3 / WAV exports
+            </li>
+          </ul>
+          <button class="mt-8 w-full rounded-full border border-cyan-100/20 bg-transparent py-3 text-xs font-normal uppercase tracking-wide text-cyan-50 transition hover:bg-cyan-100/10 hover:text-cyan-100">
+            Get Started
+          </button>
+        </div>
+
+        <div class="relative flex flex-col rounded-[1.55rem] border border-transparent bg-cyan-100 p-8 shadow-2xl" style="background: linear-gradient(rgb(207,250,254), rgb(207,250,254)) padding-box, linear-gradient(135deg, rgba(255,255,255,0.4), rgba(207,250,254,0.2), rgba(0,0,0,0.1)) border-box;">
+          <div class="absolute -top-4 left-1/2 -translate-x-1/2 rounded-full bg-black px-4 py-1 text-[10px] font-normal uppercase tracking-widest text-cyan-50">
+            Most Popular
+          </div>
+          <h3 class="text-xl font-normal uppercase tracking-tight text-black" style="font-family: Orbitron, Inter, sans-serif;">
+            Studio
+          </h3>
+          <div class="mt-4 flex items-baseline text-black">
+            <span class="text-4xl font-normal tracking-tight" style="font-family: Orbitron, Inter, sans-serif;">
+              $49
+            </span>
+            <span class="ml-1 text-xs font-normal uppercase text-black/60">
+              /month
+            </span>
+          </div>
+          <p class="mt-4 text-xs font-normal uppercase leading-relaxed text-black/70">
+            For professional producers and small teams.
+          </p>
+          <ul class="mt-8 flex flex-1 flex-col gap-4 text-xs font-normal uppercase text-black/80">
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-black"></i>
+              Unlimited generations
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-black"></i>
+              Native DAW exports
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-black"></i>
+              Live Mix Analytics
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-black"></i>
+              Uncompressed 48kHz
+            </li>
+          </ul>
+          <button class="mt-8 w-full rounded-full bg-black py-3 text-xs font-normal uppercase tracking-wide text-cyan-50 transition hover:bg-neutral-800">
+            Start Free Trial
+          </button>
+        </div>
+
+        <div class="relative flex flex-col rounded-[1.55rem] border border-cyan-100/10 bg-black/60 p-8 shadow-xl backdrop-blur-md">
+          <h3 class="text-xl font-normal uppercase tracking-tight text-cyan-50" style="font-family: Orbitron, Inter, sans-serif;">
+            Enterprise
+          </h3>
+          <div class="mt-4 flex items-baseline text-cyan-50">
+            <span class="text-4xl font-normal tracking-tight" style="font-family: Orbitron, Inter, sans-serif;">
+              Custom
+            </span>
+          </div>
+          <p class="mt-4 text-xs font-light uppercase leading-relaxed text-cyan-50/70">
+            For large post-houses and gaming studios.
+          </p>
+          <ul class="mt-8 flex flex-1 flex-col gap-4 text-xs font-light uppercase text-cyan-50/80">
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              Custom AI models
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              API Access
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              Dedicated Support
+            </li>
+            <li class="flex items-center gap-3">
+              <i data-lucide="check" class="h-4 w-4 text-cyan-100"></i>
+              Advanced Security
+            </li>
+          </ul>
+          <button class="mt-8 w-full rounded-full border border-cyan-100/20 bg-transparent py-3 text-xs font-normal uppercase tracking-wide text-cyan-50 transition hover:bg-cyan-100/10 hover:text-cyan-100">
+            Contact Sales
+          </button>
+        </div>
+      </div>
+    </section>
+    <section class="relative mx-auto max-w-[92rem] px-3 pb-20 pt-10 sm:px-6 lg:px-10">
+      <div class="relative overflow-hidden rounded-[2rem] border border-transparent bg-cyan-100 p-8 text-black shadow-2xl shadow-cyan-900/20 sm:p-12 lg:p-16" style="background: linear-gradient(rgb(207,250,254), rgb(207,250,254)) padding-box, linear-gradient(135deg, rgba(255,255,255,0.34), rgba(207,250,254,0.22), rgba(0,0,0,0.12)) border-box;">
+        <div class="relative z-10 mx-auto max-w-3xl text-center">
+          <h2 class="text-3xl font-medium uppercase tracking-tight sm:text-5xl" style="font-family: Orbitron, Inter, sans-serif;">
+            Ready to compose?
+          </h2>
+          <p class="mx-auto mt-5 max-w-xl text-sm font-medium uppercase leading-relaxed text-black/80">
+            Join the waitlist to get early access to LumaLoop and transform your
+            creative workflow.
+          </p>
+          <div class="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <button type="button" class="inline-flex h-14 items-center justify-center rounded-full bg-black px-8 text-sm font-medium uppercase tracking-wide text-cyan-50 transition hover:scale-105 hover:text-black hover:bg-cyan-50">
+              Join Waitlist
+            </button>
+            <button type="button" class="inline-flex h-14 items-center justify-center rounded-full border border-black/20 px-8 text-sm font-medium uppercase tracking-wide text-black transition hover:bg-black/5">
+              View Examples
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <footer class="relative z-10 border-t border-cyan-100/10 bg-black/40 px-6 py-12 backdrop-blur sm:px-10 lg:px-14">
+      <div class="mx-auto flex max-w-[92rem] flex-col items-center justify-between gap-6 sm:flex-row">
+        <div class="flex flex-col items-center gap-2 sm:items-start">
+          <a href="#" class="text-xl font-medium uppercase italic tracking-tight text-cyan-100 sm:text-2xl" style="font-family: Orbitron, Inter, sans-serif;">
+            LUMALOOP
+          </a>
+          <p class="text-xs font-medium uppercase tracking-wide text-cyan-50/60">
+            © 2024 LumaLoop. All rights reserved.
+          </p>
+        </div>
+        <nav class="flex items-center gap-6 text-xs font-medium uppercase tracking-wide text-cyan-50/80">
+          <a href="#" class="transition hover:text-cyan-100">Privacy</a>
+          <a href="#" class="transition hover:text-cyan-100">Terms</a>
+          <a href="#" class="transition hover:text-cyan-100">Contact</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script class="">
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      function initWebGL() {
+        const canvas = document.getElementById('webgl-canvas');
+        const fallback = document.getElementById('webgl-fallback');
+        if (!canvas || typeof THREE === 'undefined') {
+          fallback.classList.remove('hidden');
+          return;
+        }
+
+        let renderer;
+        try {
+          renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'high-performance' });
+        } catch (error) {
+          fallback.classList.remove('hidden');
+          canvas.classList.add('hidden');
+          return;
+        }
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const geometry = new THREE.PlaneBufferGeometry(2, 2);
+
+        const material = new THREE.ShaderMaterial({
+          transparent: true,
+          uniforms: {
+            uTime: { value: 0 },
+            uResolution: { value: new THREE.Vector2(1, 1) },
+            uMotion: { value: reduceMotion ? 0.15 : 1.0 }
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            precision mediump float;
+            varying vec2 vUv;
+            uniform float uTime;
+            uniform vec2 uResolution;
+            uniform float uMotion;
+
+            float line(vec2 p, float y, float width) {
+              return smoothstep(width, 0.0, abs(p.y - y));
+            }
+
+            void main() {
+              vec2 uv = vUv;
+              vec2 p = uv * 2.0 - 1.0;
+              p.x *= uResolution.x / max(uResolution.y, 1.0);
+
+              float t = uTime * 0.36 * uMotion;
+              float waveA = sin((p.x * 3.2) + t * 2.1) * 0.12;
+              float waveB = sin((p.x * 7.4) - t * 1.4) * 0.045;
+              float beam = line(p, waveA + waveB + 0.02, 0.018);
+              float beam2 = line(p, waveA * -0.55 + waveB + 0.38, 0.012);
+              float glow = beam * 0.22 + beam2 * 0.13;
+
+              float pulse = 0.5 + 0.5 * sin(uTime * 1.4);
+              vec3 cyan = vec3(0.78, 0.98, 1.0);
+              vec3 orange = vec3(0.98, 0.45, 0.09);
+              vec3 color = cyan * glow + orange * beam2 * 0.18 * pulse;
+
+              float vignette = smoothstep(1.25, 0.12, length(p * vec2(0.85, 1.15)));
+              gl_FragColor = vec4(color, glow * vignette);
+            }
+          `
+        });
+
+        scene.add(new THREE.Mesh(geometry, material));
+
+        function resize() {
+          const rect = canvas.parentElement.getBoundingClientRect();
+          const width = Math.max(1, Math.floor(rect.width));
+          const height = Math.max(1, Math.floor(rect.height));
+          renderer.setSize(width, height, false);
+          renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+          material.uniforms.uResolution.value.set(width, height);
+        }
+
+        let start = performance.now();
+        function render(now) {
+          material.uniforms.uTime.value = (now - start) / 1000;
+          renderer.render(scene, camera);
+          requestAnimationFrame(render);
+        }
+
+        resize();
+        window.addEventListener('resize', resize, { passive: true });
+        requestAnimationFrame(render);
+      }
+
+      function initMotion() {
+        if (typeof gsap === 'undefined') return;
+
+        gsap.registerPlugin(ScrollTrigger);
+
+        const wavePath = document.querySelector('.wave-line path');
+        let waveLength = 600;
+        if (wavePath && wavePath.getTotalLength) {
+          waveLength = wavePath.getTotalLength();
+          gsap.set(wavePath, { strokeDasharray: waveLength, strokeDashoffset: 0 });
+        }
+
+        const quickSet = gsap.set;
+        quickSet(['.brand-mark', '.nav-link', '.menu-button', '.trusted-block', '.intro-copy', '.prompt-card', '.tags span', '.mint-shape', '.co-writer', '.compose-copy', '.wave-line', '.instant-card', '.play-button', '.plans-copy', '.hero-figure', '.headline-line', '.quote-card'], {
+          willChange: 'transform, opacity'
+        });
+
+        if (reduceMotion) {
+          gsap.set(['.brand-mark', '.nav-link', '.menu-button', '.trusted-block', '.intro-copy', '.prompt-card', '.tags span', '.mint-shape', '.co-writer', '.compose-copy', '.wave-line', '.instant-card', '.play-button', '.plans-copy', '.hero-figure', '.headline-line', '.quote-card', '.detail-card'], { opacity: 1, clearProps: 'transform' });
+          return;
+        }
+
+        const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+
+        tl.from('.hero-shell', { opacity: 0, scale: 0.965, y: 26, duration: 0.9 })
+          .from('.brand-mark', { opacity: 0, x: -28, duration: 0.55 }, 0.18)
+          .from('.nav-link', { opacity: 0, y: -14, duration: 0.45, stagger: 0.075 }, 0.28)
+          .from('.menu-button', { opacity: 0, scale: 0.7, rotate: -12, duration: 0.55 }, 0.38)
+
+          .from('.primary-shape', { opacity: 0, xPercent: 18, scaleX: 0.72, transformOrigin: 'right center', duration: 0.95 }, 0.78)
+          .from('.lower-shape', { opacity: 0, xPercent: -16, scaleX: 0.68, transformOrigin: 'left center', duration: 0.85 }, 1.0)
+          .from('.hero-figure', { opacity: 0, y: 80, scale: 1.06, duration: 1.1 }, 1.15)
+
+          .from('.trusted-block', { opacity: 0, x: -24, duration: 0.55 }, 1.35)
+          .from('.intro-copy', { opacity: 0, y: 18, duration: 0.5 }, 1.55)
+          .from('.co-writer', { opacity: 0, x: -18, duration: 0.45 }, 1.72)
+          .from('.compose-copy', { opacity: 0, y: -16, duration: 0.45 }, 1.85)
+          .from('.wave-line path', { strokeDashoffset: waveLength, duration: 0.8 }, 1.95)
+
+          .from('.prompt-card', { opacity: 0, x: -54, rotate: -2, duration: 0.7 }, 2.08)
+          .from('.eq-dot', { opacity: 0.2, scale: 0.55, stagger: { each: 0.012, from: 'random' }, duration: 0.26 }, 2.35)
+          .from('.play-button', { opacity: 0, scale: 0, rotate: -45, duration: 0.6, ease: 'back.out(1.8)' }, 2.45)
+
+          .from('.instant-card', { opacity: 0, x: 62, scale: 0.94, duration: 0.68 }, 2.62)
+          .from('.plans-copy', { opacity: 0, y: 30, skewY: 3, duration: 0.52 }, 2.82)
+          .from('.headline-line', { opacity: 0, x: 96, skewX: -8, duration: 0.66, stagger: 0.16 }, 3.05)
+          .from('.quote-card', { opacity: 0, y: 44, scale: 0.94, duration: 0.7 }, 3.62)
+          .from('.tags span', { opacity: 0, y: 16, duration: 0.4, stagger: 0.055 }, 3.8)
+          .to('.play-button', { scale: 1.08, repeat: 3, yoyo: true, duration: 0.38, ease: 'sine.inOut' }, 4.25)
+          .to('.record', { rotate: 360, duration: 2.7, ease: 'none' }, 4.1)
+          .to('.headline-line', { textShadow: '0 0 1.25rem rgba(207,250,254,0.35)', duration: 0.75, stagger: 0.07, yoyo: true, repeat: 1 }, 4.85)
+          .to('.hero-figure', { y: -10, duration: 1.5, ease: 'sine.inOut', yoyo: true, repeat: 1 }, 5.2);
+
+        gsap.to('.eq-dot', {
+          scaleY: () => gsap.utils.random(0.45, 1.7),
+          opacity: () => gsap.utils.random(0.55, 1),
+          transformOrigin: 'center bottom',
+          duration: 0.42,
+          repeat: -1,
+          yoyo: true,
+          stagger: { each: 0.025, from: 'random' },
+          ease: 'sine.inOut'
+        });
+
+        gsap.to('.record', {
+          rotate: 360,
+          duration: 6,
+          repeat: -1,
+          ease: 'none',
+          delay: 6.85
+        });
+
+        gsap.to('.wave-line', {
+          x: 8,
+          duration: 1.8,
+          repeat: -1,
+          yoyo: true,
+          ease: 'sine.inOut',
+          delay: 5.2
+        });
+
+        gsap.from('.detail-card', {
+          scrollTrigger: {
+            trigger: '.detail-card',
+            start: 'top 85%'
+          },
+          opacity: 0,
+          y: 34,
+          duration: 0.7,
+          stagger: 0.12,
+          ease: 'power3.out'
+        });
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        initWebGL();
+        initMotion();
+      });
+    </script>
+  
+</body></html>

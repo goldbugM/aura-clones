@@ -1,0 +1,554 @@
+<html lang="en" class="scroll-smooth"><head><script data-session="ab1c0e54-5beb-4818-81b6-f6b8e7dc2d4d" data-parent-origin="https://nexus-web3-product-83.aura.build" data-parent-url="https://nexus-web3-product-83.aura.build/" data-dynamic-page-slugs="[]">Object.defineProperty(window, "__AURA_OPAQUE_STORAGE__", {value: {
+        seed: {"localStorage":[],"sessionStorage":[]},
+        persist: function(area, operation, key, value) {
+          parent.postMessage({channel:"aura-published-v1",session:"ab1c0e54-5beb-4818-81b6-f6b8e7dc2d4d",
+            type:"widget-storage",area:area,operation:operation,key:key,value:value},"https://nexus-web3-product-83.aura.build");
+        }
+      }});
+(function () {
+  if (window.parent === window || window.origin !== "null" || window.__AURA_PUBLISHED_EMBEDS__) return;
+  window.__AURA_PUBLISHED_EMBEDS__ = true;
+  var placeholders = new WeakMap();
+
+  // Instagram's embed.js ignores null-origin MOUNTED/MEASURE messages, leaving
+  // its frames absolutely positioned at height=0. Descendants inherit our
+  // sandbox. Handle only sizing, without forging origins or granting storage,
+  // cookie, parent-document or arbitrary style access to the embedded provider.
+  function instagramPost(value, embed) {
+    try {
+      var url = new URL(value);
+      if (url.protocol !== "https:" || url.port || url.username || url.password ||
+          !/^(www\.)?(instagram\.com|instagr\.am)$/.test(url.hostname)) return null;
+      var match = url.pathname.match(embed
+        ? /^\/(p|reel|tv)\/([a-zA-Z0-9_-]+)\/embed(?:\/captioned)?\/?$/
+        : /^\/(p|reel|tv)\/([a-zA-Z0-9_-]+)\/?$/);
+      return match && match[1] + "/" + match[2];
+    } catch { return null; }
+  }
+  window.addEventListener("message", function (event) {
+    if (!event.isTrusted || event.origin !== "null" || !event.source || event.source === window ||
+        typeof event.data !== "string" || event.data.length > 16384) return;
+    var message;
+    try { message = JSON.parse(event.data); } catch { return; }
+    if (!message || (message.type !== "MOUNTED" && message.type !== "MEASURE") ||
+        !message.details || typeof message.details !== "object") return;
+    var frames = document.querySelectorAll("iframe.instagram-media[data-instgrm-payload-id]");
+    for (var frame of frames) {
+      if (frame.contentWindow !== event.source) continue;
+      var post = instagramPost(frame.src, true);
+      if (!post) return;
+      var payloadId = frame.getAttribute("data-instgrm-payload-id");
+      var known = placeholders.get(frame);
+      if (!known || known.post !== post || known.id !== payloadId) {
+        var element = document.getElementById(payloadId);
+        if (!element || element.tagName !== "BLOCKQUOTE" || element.parentNode !== frame.parentNode ||
+            instagramPost(element.getAttribute("data-instgrm-permalink")) !== post) return;
+        known = { post: post, id: payloadId, element: element };
+        placeholders.set(frame, known);
+      }
+      var placeholder = known.element;
+      if (message.type === "MEASURE") {
+        var height = message.details.height;
+        if (typeof height === "number" && Number.isFinite(height) && height > 0 && height <= 10000)
+          frame.height = String(Math.ceil(height));
+      } else {
+        if (!(Number(frame.height) > 0)) frame.height = String(Math.max(1, placeholder.clientHeight));
+        frame.style.position = frame.getAttribute("data-instgrm-preserve-position") || "";
+        frame.classList.add("instagram-media-rendered");
+        // Match the SDK's DOM replacement: hidden placeholders still affect
+        // grid :nth-child selectors. Retain only the private sizing association.
+        placeholder.remove();
+      }
+      return;
+    }
+  });
+})();
+(()=>{function q(t){if(!t)return()=>{};let e=n=>{if(n.defaultPrevented)return;let i=n.target;if(!i)return;let c=i.closest?.("a");if(!c)return;let l=(c.getAttribute("href")||"").trim(),s=null;if(l.startsWith("#"))s=decodeURIComponent(l.slice(1));else{let a=l.indexOf("#");if(a>=0){let m=l.slice(0,a).toLowerCase(),d=l.slice(a+1);(m===""||m==="/"||m==="./"||m.endsWith("/index.html")||m==="index.html")&&(s=decodeURIComponent(d))}}if(s==null)return;if(n.preventDefault(),s===""||s.toLowerCase()==="top"){try{t.defaultView?.scrollTo({top:0,behavior:"smooth"}),t.defaultView&&(t.defaultView.location.hash="#"+s)}catch{t.defaultView?.scrollTo(0,0)}return}let r=t.getElementById(s);if(!r){let a=m=>window.CSS&&window.CSS.escape?window.CSS.escape(m):m.replace(/"/g,'\\"').replace(/\\/g,"\\\\");try{r=t.querySelector(`[name="${a(s)}"]`)}catch{}}if(r){try{r.scrollIntoView({behavior:"smooth",block:"start"})}catch{r.scrollIntoView()}try{t.defaultView&&(t.defaultView.location.hash=`#${s}`)}catch{}}};return t.addEventListener("click",e),()=>{try{t.removeEventListener("click",e)}catch{}}}function $(t,e,n,i=window.location.href){if(!t)return()=>{};let c=a=>{try{return new URL(a,i).origin!==new URL(i).origin}catch{return!1}},l=a=>{try{window.open(a,"_blank","noopener,noreferrer")}catch{}},s=(n||[]).map(a=>{let m=a.match(/^([a-z0-9-]+)\/:slug$/i);return m?m[1].toLowerCase():null}).filter(Boolean),r=a=>{if(a.button!==0||a.metaKey||a.ctrlKey||a.shiftKey||a.altKey)return;let m=a.target;if(!m)return;let d=p=>{if(!p)return!1;try{let f=new URL(p,i).pathname||"/",h=new URL(i).pathname.match(/^\/(?:share|s)\/[^/]+/)?.[0];if(h&&(f===h||f.startsWith(h+"/"))&&(f=f.slice(h.length)||"/"),f==="/"||f.toLowerCase()==="/index.html")return a.preventDefault(),a.stopPropagation(),e("home"),!0;let b=f.match(/^\/share\/([^\/]+)(?:\/([^\/]+))?$/);if(b){let A=b[2]||b[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}let C=f.match(/^\/s\/([^\/]+)(?:\/([^\/]+))?$/);if(C){let A=C[2]||C[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}let T=f.match(/^\/page\/([^\/]+)(?:\/([^\/]+))?$/);if(T){let A=T[2]||T[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}let v=f.match(/^\/([a-z0-9-]+)\/([^\/]+)$/i);if(v){let A=v[1].toLowerCase(),U=v[2],k;try{k=decodeURIComponent(U).toLowerCase()}catch{k=U.toLowerCase()}if(s.includes(A))return a.preventDefault(),a.stopPropagation(),e(`${A}/:slug`,k),!0}let O=f.match(/^\/([A-Za-z0-9_-]{1,64})$/);if(O){let A=O[1];return a.preventDefault(),a.stopPropagation(),e(A),!0}}catch{}return!1},o=m.closest?.("a");if(o){let p=(o.getAttribute("href")||"").trim();if(!p||o.hasAttribute("download")||o.getAttribute("target")==="_blank"||/^(?:mailto:|tel:)/i.test(p)||/^[a-z][a-z0-9+.-]*:/i.test(p)&&!/^https?:/i.test(p)||p.startsWith("#"))return;let g=p.indexOf("#");if(g>=0){let f=p.slice(0,g).toLowerCase();if(f===""||f==="/"||f==="./"||f==="index.html"||f.endsWith("/index.html"))return}if(c(p)){a.preventDefault(),a.stopPropagation(),l(p);return}if(d(p))return}let u=m.closest?.("[onclick]");if(u){let p=u.getAttribute("onclick")||"",g=p.match(/["'](https?:\/\/[^"']+)["']/);if(g&&c(g[1])){a.preventDefault(),a.stopPropagation(),l(g[1]);return}let f=p.match(/["'](\/[A-Za-z0-9_\-\/]+)["']/);if(f&&d(f[1]))return}};return t.addEventListener("click",r,!0),()=>{try{t.removeEventListener("click",r,!0)}catch{}}}var B="aura-share-responsive-guards",E="aura-share-mobile-grid-stack";var gt=`
+@media (max-width: 639px) {
+  html,
+  body {
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  #root {
+    max-width: 100% !important;
+  }
+
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
+  }
+
+  .${E} {
+    grid-template-columns: minmax(0, 1fr) !important;
+    column-gap: min(1rem, 4vw) !important;
+  }
+
+  .${E} > * {
+    grid-column: 1 / -1 !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+`,z=t=>{let e=t.ownerDocument.defaultView;return!!(e&&t instanceof e.HTMLElement)},ht=t=>{for(let e of Array.from(t.classList)){let n=e.match(/^grid-cols-(\d+)$/);if(!n)continue;let i=Number(n[1]);if(Number.isFinite(i)&&i>1)return i}return 0},yt=(t,e)=>Array.from(t.children).some(n=>z(n)?n.classList.contains(`col-span-${e}`)||n.classList.contains("col-span-full"):!1),bt=(t,e)=>{if(e>639||!t.classList.contains("grid"))return!1;let n=ht(t);if(!n||!yt(t,n))return!1;let i=t.ownerDocument.defaultView;if(!i)return!1;let c=i.getComputedStyle(t),l=Number.parseFloat(c.columnGap||"0")||0,s=l*Math.max(0,n-1);return l>=20&&(s>=t.clientWidth*.4||t.scrollWidth>t.clientWidth+1)},wt=t=>{if(t.getElementById(B))return;let e=t.createElement("style");e.id=B,e.textContent=gt,t.head.appendChild(e)},At=t=>{let e=t.defaultView;if(!e)return;wt(t);let n=e.innerWidth||t.documentElement.clientWidth||0;t.querySelectorAll(`.${E}`).forEach(i=>i.classList.remove(E)),!(n>639)&&(t.querySelectorAll(".grid").forEach(i=>{z(i)&&bt(i,n)&&i.classList.add(E)}),e.scrollTo(0,e.scrollY||0),t.documentElement.scrollLeft=0,t.body&&(t.body.scrollLeft=0))},V=t=>{let e=t.defaultView;if(!e)return()=>{};let n=null,i=[],c=()=>{n!==null&&e.cancelAnimationFrame(n),n=e.requestAnimationFrame(()=>{n=null,At(t)})};return c(),i.push(e.setTimeout(c,250)),i.push(e.setTimeout(c,1e3)),e.addEventListener("resize",c),()=>{n!==null&&e.cancelAnimationFrame(n),i.forEach(l=>e.clearTimeout(l)),e.removeEventListener("resize",c)}};var P=async()=>[];function G(t){P=t}var K=t=>P(t),Z=(t,e)=>P(e);var L=new Map,y=null;function Ct(t){return/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)}var Et=`
+@keyframes cms-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.cms-loading {
+  position: relative;
+  color: transparent !important;
+  /* Override any background-image (inline styles, Tailwind bg-[url(...)]) */
+  background-image: none !important;
+  background-color: transparent !important;
+  background: linear-gradient(90deg, 
+    rgba(128, 128, 128, 0.1) 25%, 
+    rgba(128, 128, 128, 0.2) 50%, 
+    rgba(128, 128, 128, 0.1) 75%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: cms-shimmer 1.5s infinite !important;
+  border-radius: 12px;
+  min-height: 1em;
+  min-width: 3em;
+  overflow: hidden;
+}
+.cms-loading * {
+  visibility: hidden !important;
+}
+.cms-loading img {
+  opacity: 0 !important;
+}
+`;function St(t){if(t.getElementById("cms-loading-styles"))return;let e=t.createElement("style");e.id="cms-loading-styles",e.textContent=Et,t.head?.appendChild(e)}function Lt(t){St(t);let e=["[data-cms-item-slug]","[data-cms-item]","[data-cms-text-item-slug]","[data-cms-text-item]","[data-cms-image-item-slug]","[data-cms-image-item]","[data-cms-link-item-slug]","[data-cms-link-item]","[data-cms-loop]","[data-cms-field]","[data-cms-text-field]","[data-cms-image-field]","[data-cms-link-field]","[data-cms-collection]"];t.querySelectorAll(e.join(", ")).forEach(i=>{i.classList.add("cms-loading")})}function xt(t){t.querySelectorAll(".cms-loading").forEach(n=>{n.classList.remove("cms-loading")})}function Q(){L.clear(),y=null}async function F(t,e,n=!1){let i=Ct(t),c=i?`${t}:${n}`:`${e}:${t}:${n}`;if(y?.has(c))return y.get(c);if(L.has(c)){let l=L.get(c);return y?.set(c,l),l}try{let l;if(i)l=await K(t,n);else if(e)l=await Z(e,t,n);else return console.warn(`[CMS] Cannot fetch items for slug "${t}" without projectId`),[];return L.set(c,l),y?.set(c,l),l}catch(l){return console.error(`[CMS] Failed to fetch items for collection ${t}:`,l),[]}}function X(t){if(t==null)return null;if(typeof t=="number"&&!Number.isNaN(t))return t;if(typeof t=="string"){let e=t.trim();if(!e)return null;let n=Number(e);return Number.isNaN(n)?null:n}return null}function j(t){if(t==null)return null;if(t instanceof Date)return t.getTime();if(typeof t=="string"){let e=Date.parse(t);return Number.isNaN(e)?null:e}return null}function Y(t,e){if(t==null)return null;if(e==="number")return X(t);if(e==="date")return j(t);if(e)return String(t).toLowerCase();let n=X(t);if(n!==null)return n;let i=j(t);return i!==null?i:String(t).toLowerCase()}function It(t,e,n){if(t===null&&e===null)return 0;if(t===null)return 1;if(e===null)return-1;if(typeof t=="number"&&typeof e=="number")return n==="desc"?e-t:t-e;let i=String(t),c=String(e);return n==="desc"?c.localeCompare(i):i.localeCompare(c)}function Mt(t,e,n,i){let c=e.trim();return c?[...t].sort((l,s)=>{let r=Y(l.data?.[c],i),a=Y(s.data?.[c],i);return It(r,a,n)}):t}async function Tt(t,e,n=!1){let i=!1;y||(y=new Map);let c=t.querySelectorAll("[data-cms-loop]:not([data-cms-loop-expanded])");for(let l of c){let s=l.getAttribute("data-cms-loop");if(!s)continue;let r=l.firstElementChild;if(r)try{let a=await F(s,e,n),m=l.getAttribute("data-cms-loop-order"),d=l.getAttribute("data-cms-loop-direction")?.toLowerCase()==="desc"?"desc":"asc",o=l.getAttribute("data-cms-loop-order-type")?.toLowerCase()||"",u=m&&m.trim()?Mt(a,m,d,o):a;if(u.length===0){r.style.display="none",l.setAttribute("data-cms-loop-expanded","true"),l.setAttribute("data-cms-loop-template-hidden","true"),i=!0;continue}l.setAttribute("data-cms-loop-template",r.outerHTML);let p=[];for(let g=0;g<u.length;g++){let f=u[g],h=r.cloneNode(!0);kt(h,s,f);let b=f.data?.slug||f.id;h.setAttribute("data-cms-loop-item",b),g===0?h.setAttribute("data-cms-loop-template-item","true"):h.setAttribute("data-cms-loop-preview-item","true"),p.push(h)}for(;l.firstChild;)l.removeChild(l.firstChild);for(let g of p)l.appendChild(g);l.setAttribute("data-cms-loop-expanded","true"),i=!0}catch(a){console.error("Failed to expand CMS loop:",a)}}return i&&vt(t),i}function vt(t){let e=[".reveal-item:not(.reveal-active)",".fade-in:not(.is-visible)",".slide-in:not(.is-visible)",".animate-on-scroll:not(.animated)","[data-animate]:not(.animated)"],n=t.querySelectorAll(e.join(", "));if(n.length===0)return;let i=n.length,c=new IntersectionObserver((r,a)=>{r.forEach(m=>{if(m.isIntersecting){let d=m.target;d.classList.contains("reveal-item")&&d.classList.add("reveal-active"),(d.classList.contains("fade-in")||d.classList.contains("slide-in"))&&d.classList.add("is-visible"),(d.classList.contains("animate-on-scroll")||d.hasAttribute("data-animate"))&&d.classList.add("animated"),a.unobserve(d),i--,i<=0&&a.disconnect()}})},{root:null,rootMargin:"0px",threshold:.1});n.forEach(r=>c.observe(r));let l=setTimeout(()=>{i>0&&c.disconnect()},3e5),s=c.disconnect.bind(c);c.disconnect=()=>{clearTimeout(l),s()};try{t.dispatchEvent(new CustomEvent("cms-loop-expanded",{bubbles:!0}))}catch{}}function kt(t,e,n){let i=t.querySelectorAll("[data-cms-field], [data-cms-text-field], [data-cms-image-field], [data-cms-link-field]"),c=[t,...Array.from(i)];for(let r of c){let a=r.getAttribute("data-cms-field"),m=r.getAttribute("data-cms-type"),d=r.getAttribute("data-cms-collection");if(!a&&r.hasAttribute("data-cms-text-field")&&(a=r.getAttribute("data-cms-text-field"),m="text",d=r.getAttribute("data-cms-text-collection")),!a&&r.hasAttribute("data-cms-image-field")&&(a=r.getAttribute("data-cms-image-field"),m="image",d=r.getAttribute("data-cms-image-collection")),!a&&r.hasAttribute("data-cms-link-field")&&(a=r.getAttribute("data-cms-link-field"),m="link",d=r.getAttribute("data-cms-link-collection")),!a||d&&d!==e)continue;r.hasAttribute("data-cms-field")?r.setAttribute("data-cms-collection",e):r.hasAttribute("data-cms-text-field")?r.setAttribute("data-cms-text-collection",e):r.hasAttribute("data-cms-image-field")?r.setAttribute("data-cms-image-collection",e):r.hasAttribute("data-cms-link-field")&&r.setAttribute("data-cms-link-collection",e);let o=n.data?.[a];if(m==="text"){let u=o!=null?String(o):"";if(r.tagName.toLowerCase()==="iconify-icon")u?r.setAttribute("icon",u):r.removeAttribute("icon");else if(nt(u)){let p=H(u);r.innerHTML=p}else r.textContent=u}else if(m==="number"||m==="date"){if(o==null||o==="")continue;let u=String(o);D(r,u)}else if(m==="image"){let u=o!=null?String(o):"",p=u.match(/^bg-\[url\(['"]?(.+?)['"]?\)\]$/);if(p&&p[1]&&(u=p[1]),r.tagName==="IMG"){let g=r;u?g.src=u:(g.src="",g.removeAttribute("src"))}else{let g=r;u?g.style.backgroundImage=`url('${tt(u)}')`:g.style.backgroundImage=""}}else if(m==="link"){let u=o!=null?String(o):"";R(r,u)}else if(m==="icon"){let u=o!=null?String(o):"";r.tagName.toLowerCase()==="iconify-icon"&&(u?r.setAttribute("icon",u):r.removeAttribute("icon"))}else if(m==="richtext"){let u=o!=null?String(o):"",p=H(u);r.innerHTML=p}}let l=t.querySelectorAll("[data-cms-slug-link]"),s=t.hasAttribute("data-cms-slug-link")?[t,...Array.from(l)]:Array.from(l);for(let r of s){let a=r.getAttribute("data-cms-slug-link");if(!a||a!==e)continue;let m=n.data?.slug||n.id,d=`/${a}/${m}`;R(r,d)}}function $t(t){let e=!1,n=t.querySelectorAll("[data-cms-loop-expanded]");for(let i of n){if(i.hasAttribute("data-cms-loop-template-hidden")){let l=i.firstElementChild;l&&(l.style.display=""),e=!0}else{let l=i.querySelector("[data-cms-loop-item]");if(l){let s=l.cloneNode(!0);for(s.removeAttribute("data-cms-loop-item"),s.removeAttribute("data-cms-loop-template-item"),s.removeAttribute("data-cms-loop-preview-item"),Pt(s),s.style.pointerEvents="";i.firstChild;)i.removeChild(i.firstChild);i.appendChild(s),e=!0}else{let s=i.getAttribute("data-cms-loop-template");s&&(i.innerHTML=s,e=!0)}}i.removeAttribute("data-cms-loop-expanded"),i.removeAttribute("data-cms-loop-template"),i.removeAttribute("data-cms-loop-template-hidden")}return e}function Pt(t){let e=t.querySelectorAll("[data-cms-field], [data-cms-text-field], [data-cms-image-field], [data-cms-link-field]"),n=[t,...Array.from(e)];for(let i of n)i.removeAttribute("data-cms-item"),i.removeAttribute("data-cms-text-item"),i.removeAttribute("data-cms-image-item"),i.removeAttribute("data-cms-link-item")}async function Dt(t,e,n=!1){let i=y!==null;i||(y=new Map);try{let c=$t(t);return await Tt(t,e,n)||c}finally{i||(y=null)}}function _t(t){let e=t.match(/^bg-\[url\(['"]?(.+?)['"]?\)\]$/);return e&&e[1]?e[1]:t}function tt(t){return t.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\(/g,"\\(").replace(/\)/g,"\\)")}function D(t,e){t.tagName.toLowerCase()==="iconify-icon"?e?t.setAttribute("icon",e):t.removeAttribute("icon"):t.textContent=e}function Rt(t,e){let n=_t(e);t.tagName==="IMG"?t.src=n:t.style.backgroundImage=n?`url('${tt(n)}')`:""}function et(t){return t.replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\n/g,"\\n").replace(/\r/g,"\\r")}function _(t){try{let e=new URL(t,window.location.origin);return(e.protocol==="http:"||e.protocol==="https:")&&e.origin!==window.location.origin}catch{return!1}}function R(t,e){if(t.tagName.toLowerCase()==="a")e?(t.setAttribute("href",e),_(e)?(t.setAttribute("target","_blank"),t.setAttribute("rel","noopener noreferrer")):(t.removeAttribute("target"),t.setAttribute("rel","noopener noreferrer"))):(t.removeAttribute("href"),t.removeAttribute("target"));else if(e){let n=et(e),i=_(e)?`window.open('${n}', '_blank', 'noopener,noreferrer')`:`window.location.href='${n}'`;t.setAttribute("onclick",i),t.getAttribute("role")||t.setAttribute("role","button");let c=t.getAttribute("class")||"";c.includes("cursor-pointer")||t.setAttribute("class",`${c} cursor-pointer`.trim())}else t.removeAttribute("onclick")}function Ht(t,e){t.tagName.toLowerCase()==="iconify-icon"&&(e?t.setAttribute("icon",e):t.removeAttribute("icon"))}function H(t){if(!t)return"";let n=new DOMParser().parseFromString(t,"text/html"),i=new Set(["p","br","strong","b","em","i","u","s","strike","a","ul","ol","li","h1","h2","h3","h4","h5","h6","blockquote","span","div","sub","sup"]),c=new Set(["p","div","blockquote","h1","h2","h3","h4","h5","h6"]),l={a:new Set(["href","target","rel"])};function s(d){if((d.textContent||"").trim().length>0)return!1;for(let u of Array.from(d.children))if(u.tagName.toLowerCase()!=="br"&&!s(u))return!1;return!0}function r(d){if(d.nodeType===Node.TEXT_NODE)return d.cloneNode(!0);if(d.nodeType!==Node.ELEMENT_NODE)return null;let o=d,u=o.tagName.toLowerCase();if(!i.has(u)){let f=document.createDocumentFragment();for(let h of Array.from(o.childNodes)){let b=r(h);b&&f.appendChild(b)}return f.childNodes.length>0?f:null}if(c.has(u)&&s(o))return null;let p=document.createElement(u),g=l[u]||new Set;for(let f of Array.from(o.attributes))if(g.has(f.name.toLowerCase())){let h=f.value;if(f.name.toLowerCase()==="href"){let b=h.toLowerCase().trim();if(b.startsWith("javascript:")||b.startsWith("data:"))continue}p.setAttribute(f.name,h)}if(u==="a"){p.setAttribute("rel","noopener noreferrer");let f=p.getAttribute("href")||"";_(f)?p.setAttribute("target","_blank"):p.removeAttribute("target")}for(let f of Array.from(o.childNodes)){let h=r(f);h&&p.appendChild(h)}return p}let a=document.createDocumentFragment();for(let d of Array.from(n.body.childNodes)){let o=r(d);o&&a.appendChild(o)}let m=document.createElement("div");return m.appendChild(a),m.innerHTML}function J(t,e){let n=H(e);t.innerHTML=n}function nt(t){return t?/<[a-z][\s\S]*>/i.test(t):!1}function it(t,e,n){if(e==="text")nt(n)?J(t,n):D(t,n);else if(e==="richtext")J(t,n);else if(e==="number"||e==="date"){if(!n)return;D(t,n)}else e==="image"?Rt(t,n):e==="link"?R(t,n):e==="icon"&&Ht(t,n)}async function Ft(t,e,n=!1){y||(y=new Map);let i=!1,c=t.querySelectorAll("[data-cms-item-slug]:not([data-cms-loop-item]), [data-cms-item]:not([data-cms-loop-item]), [data-cms-text-item-slug]:not([data-cms-loop-item]), [data-cms-text-item]:not([data-cms-loop-item]), [data-cms-image-item-slug]:not([data-cms-loop-item]), [data-cms-image-item]:not([data-cms-loop-item]), [data-cms-link-item-slug]:not([data-cms-loop-item]), [data-cms-link-item]:not([data-cms-loop-item])"),l=new Map;for(let s of c){if(s.closest("[data-cms-loop]"))continue;let r=null,a=null,m=!1,d=null,o=null;s.hasAttribute("data-cms-item-slug")||s.hasAttribute("data-cms-item")?(r=s.getAttribute("data-cms-collection"),a=s.getAttribute("data-cms-item-slug")||s.getAttribute("data-cms-item"),m=!s.hasAttribute("data-cms-item-slug")&&s.hasAttribute("data-cms-item"),d=s.getAttribute("data-cms-field"),o=s.getAttribute("data-cms-type")):s.hasAttribute("data-cms-text-item-slug")||s.hasAttribute("data-cms-text-item")?(r=s.getAttribute("data-cms-text-collection"),a=s.getAttribute("data-cms-text-item-slug")||s.getAttribute("data-cms-text-item"),m=!s.hasAttribute("data-cms-text-item-slug")&&s.hasAttribute("data-cms-text-item"),d=s.getAttribute("data-cms-text-field"),o="text"):s.hasAttribute("data-cms-image-item-slug")||s.hasAttribute("data-cms-image-item")?(r=s.getAttribute("data-cms-image-collection"),a=s.getAttribute("data-cms-image-item-slug")||s.getAttribute("data-cms-image-item"),m=!s.hasAttribute("data-cms-image-item-slug")&&s.hasAttribute("data-cms-image-item"),d=s.getAttribute("data-cms-image-field"),o="image"):(s.hasAttribute("data-cms-link-item-slug")||s.hasAttribute("data-cms-link-item"))&&(r=s.getAttribute("data-cms-link-collection"),a=s.getAttribute("data-cms-link-item-slug")||s.getAttribute("data-cms-link-item"),m=!s.hasAttribute("data-cms-link-item-slug")&&s.hasAttribute("data-cms-link-item"),d=s.getAttribute("data-cms-link-field"),o="link"),!(!r||!a||!d||!o)&&(l.has(r)||l.set(r,[]),l.get(r).push({el:s,itemSlug:a,isLegacyUUID:m,fieldSlug:d,bindingType:o}))}for(let[s,r]of l){let a=await F(s,e,n),m=new Map,d=new Map;for(let o of a){d.set(o.id,o);let u=o.data?.slug;u&&m.set(String(u).toLowerCase(),o)}for(let{el:o,itemSlug:u,isLegacyUUID:p,fieldSlug:g,bindingType:f}of r){let h;if(p?h=d.get(u):h=m.get(u.toLowerCase()),!h)continue;let b=h.data?.[g],C=b!=null?String(b):"";it(o,f,C),i=!0}}return i}async function Nt(t,e,n,i,c=!1){if(!e||!n||!i)return!1;y||(y=new Map);let l=await F(n,e,c),s=i.toLowerCase(),r=l.find(o=>o.data?.slug?.toLowerCase()===s);if(!r)return console.warn(`Dynamic page: Could not find item with slug "${i}" in collection "${n}"`),!1;let a=!1,m=t.querySelectorAll(`[data-cms-collection="${n}"][data-cms-field], [data-cms-link-collection="${n}"][data-cms-link-field]`);for(let o of m){if(o.closest("[data-cms-loop]"))continue;let u=null,p=null;if(o.hasAttribute("data-cms-field")?(u=o.getAttribute("data-cms-field"),p=o.getAttribute("data-cms-type")||"text"):o.hasAttribute("data-cms-link-field")&&(u=o.getAttribute("data-cms-link-field"),p="link"),!u)continue;let g=r.data?.[u],f=g!=null?String(g):"";it(o,p||"text",f),a=!0}let d=t.querySelectorAll(`[data-cms-slug-link="${n}"]`);for(let o of d){if(o.closest("[data-cms-loop]"))continue;let u=`/${n}/${r.data?.slug||r.id}`;if(o.tagName.toLowerCase()==="a")o.setAttribute("href",u);else{let g=`window.location.href='${et(u)}'`;o.setAttribute("onclick",g),o.getAttribute("role")||o.setAttribute("role","button");let f=o.getAttribute("class")||"";f.includes("cursor-pointer")||o.setAttribute("class",`${f} cursor-pointer`.trim())}a=!0}return a}async function st(t,e,n,i=!1){Lt(t);try{y=new Map;let c=await Dt(t,e,i),l=await Ft(t,e,i),s=!1;return n&&e&&(s=await Nt(t,e,n.collectionSlug,n.itemSlug,i)),c||l||s}finally{y=null,xt(t)}}var I=document.currentScript,ut=I.dataset.session,mt=I.dataset.parentOrigin,w=(t,e={})=>parent.postMessage({channel:"aura-published-v1",session:ut,type:t,...e},mt),dt,rt="",at=!1,S=!0,N=!1,ft=()=>{S||N||(N=!0,requestAnimationFrame(()=>{N=!1,S||w("scroll",{y:window.scrollY})}))};window.addEventListener("scroll",ft,{passive:!0});var Wt=t=>{if(!Number.isFinite(t)||t<0||t>1e7||t===0){S=!1,w("scroll-restored",{y:window.scrollY});return}S=!0;let e=()=>{let n=document.documentElement,i=n.style.scrollBehavior;n.style.scrollBehavior="auto",window.scrollTo(0,t),requestAnimationFrame(()=>{window.scrollTo(0,t),requestAnimationFrame(()=>{n.style.scrollBehavior=i,S=!1,w("scroll-restored",{y:window.scrollY}),ft()})})};document.readyState==="complete"?e():window.addEventListener("load",e,{once:!0})},ot=$(document,(t,e)=>w("navigate",{slug:t,itemSlug:e}),JSON.parse(I.dataset.dynamicPageSlugs||"[]"),I.dataset.parentUrl||window.location.href),Ot=0,M=new Map;G(t=>new Promise((e,n)=>{let i=++Ot,c=window.setTimeout(()=>{M.delete(i),document.documentElement.dataset.auraCmsState="error",w("error",{feature:"cms"}),n(new Error("Published CMS request timed out"))},15e3);M.set(i,{resolve:e,reject:n,timer:c}),w("cms",{requestId:i,collection:t})}));var W=t=>(t?.getAttribute("aria-label")||t?.textContent||t?.id||"").replace(/\s+/g," ").trim().slice(0,120),pt=t=>{let e=t?.getAttribute("data-aura-event")?.trim()||"";return/^[A-Za-z][A-Za-z0-9_:-]{0,99}$/.test(e)?e:null},x=t=>{dt?.tracking&&w("track",{payload:t,title:document.title.slice(0,300)})};document.addEventListener("click",t=>{let e=t.target instanceof Element?t.target:null;if(!e)return;let n=e.closest("[data-aura-event]"),i=pt(n);if(i){x({event:i,event_origin:"custom_element",element_label:W(n)});return}let c=e.closest("a[href]");if(c){x({event:"aura_link_click",link_text:W(c),link_url:c.href.slice(0,2048)});return}let l=e.closest('button,[role="button"],input[type="button"],input[type="submit"],input[type="reset"]');l&&x({event:"aura_button_click",element_label:W(l)})},!0);document.addEventListener("submit",t=>{let e=t.target;if(!(e instanceof HTMLFormElement))return;let n=pt(e);x(n?{event:n,event_origin:"custom_form",form_id:e.id.slice(0,120)}:{event:"aura_form_submit",form_id:e.id.slice(0,120),form_action:e.action.slice(0,2048),form_method:e.method})},!0);var lt=Promise.resolve();function Ut(t){let e=JSON.stringify(t);e!==rt&&(rt=e,dt=t,at||(at=!0,Wt(t.restoreScrollY)),ot(),ot=$(document,(n,i)=>w("navigate",{slug:n,itemSlug:i}),t.dynamicPageSlugs,t.parentUrl),document.documentElement.dataset.auraRuntime="ready",t.projectId&&(lt=lt.then(async()=>{Q(),document.documentElement.dataset.auraCmsState="loading",await st(document,t.projectId,t.dynamicContext,!0),document.documentElement.dataset.auraCmsState!=="error"&&(document.documentElement.dataset.auraCmsState="ready")}).catch(()=>{document.documentElement.dataset.auraCmsState="error",w("error",{feature:"cms"}),console.error("Aura published runtime: CMS refresh failed")})))}window.addEventListener("message",t=>{let e=t.data;if(!(t.source!==parent||t.origin!==mt||e?.channel!=="aura-published-v1"||e.session!==ut)&&(e.type==="configure"&&Ut(e.config),e.type==="cms-result")){let n=M.get(e.requestId);if(!n)return;clearTimeout(n.timer),M.delete(e.requestId),e.error?(document.documentElement.dataset.auraCmsState="error",console.error("Aura published runtime: CMS refresh failed"),w("error",{feature:"cms"}),n.reject(new Error("Published CMS request failed"))):n.resolve(e.items)}});function ct(){q(document),V(document),w("ready",{title:document.title.slice(0,300)})}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",ct,{once:!0}):ct();})();
+</script>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXUS | Web3 Product Design Studio</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400&family=JetBrains+Mono:wght@300;400&family=Playfair+Display:ital,wght@0,400;1,400&display=swap');
+:root {
+--primary: #0f0c0b;
+--secondary: #1b1613;
+--accent: #ff8b3e;
+--surface: #fbf6ec;
+--bone: #fff6e5;
+--stroke-1: #dfd8d3;
+--stroke-2: #b1aca6;
+--stroke-3: #54504e;
+}
+body {
+background-color: var(--primary);
+color: var(--surface);
+font-family: 'Inter', sans-serif;
+-webkit-font-smoothing: antialiased;
+-moz-osx-font-smoothing: grayscale;
+}
+.font-serif-custom { font-family: 'Playfair Display', serif; }
+.font-mono-custom { font-family: 'JetBrains Mono', monospace; }
+/* Structural Grid System */
+.grid-section {
+border-top: 1px solid var(--stroke-3);
+}
+.grid-cell {
+border-right: 1px solid var(--stroke-3);
+}
+.grid-cell-bottom {
+border-bottom: 1px solid var(--stroke-3);
+}
+.light-mode .grid-section { border-top-color: var(--stroke-1); }
+.light-mode .grid-cell { border-right-color: var(--stroke-1); }
+.light-mode .grid-cell-bottom { border-bottom-color: var(--stroke-1); }
+/* The Bracket System */
+.bracket-box {
+position: relative;
+border-top: 1px solid var(--stroke-3);
+border-bottom: 1px solid var(--stroke-3);
+}
+.bracket-box::before, .bracket-box::after {
+content: '';
+position: absolute;
+top: -2px;
+bottom: -2px;
+width: 6px;
+}
+.bracket-box::before {
+left: 0;
+border-top: 1px solid var(--surface);
+border-bottom: 1px solid var(--surface);
+border-left: 1px solid var(--surface);
+}
+.bracket-box::after {
+right: 0;
+border-top: 1px solid var(--surface);
+border-bottom: 1px solid var(--surface);
+border-right: 1px solid var(--surface);
+}
+.bracket-box.light-theme {
+border-color: var(--stroke-1);
+}
+.bracket-box.light-theme::before, .bracket-box.light-theme::after {
+border-color: var(--primary);
+}
+/* Abstract UI Wireframe Grids */
+.bg-grid-dark {
+background-size: 2rem 2rem;
+background-image: linear-gradient(to right, var(--stroke-3) 1px, transparent 1px),
+linear-gradient(to bottom, var(--stroke-3) 1px, transparent 1px);
+background-position: center center;
+}
+/* Subtle transitions */
+.hover-trigger:hover .hover-target {
+transform: scale(1.02);
+transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hover-target {
+transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--primary); }
+::-webkit-scrollbar-thumb { background: var(--stroke-3); }
+</style></head>
+<body class="selection:bg-[#ff8b3e] selection:text-white">
+
+    <!-- Global Navigation -->
+    <nav class="fixed top-0 w-full z-50 bg-[#0f0c0b]/80 backdrop-blur-md border-b border-[#54504e]">
+        <div class="max-w-[1684px] mx-auto flex items-center justify-between px-4 md:px-8 h-16">
+            <div class="font-serif-custom font-normal tracking-tight uppercase text-lg text-[#fbf6ec]">
+                NEXUS
+            </div>
+            <div class="hidden md:flex gap-8 font-mono-custom text-xs uppercase tracking-widest text-[#dfd8d3]">
+                <a href="#work" class="hover:text-[#ff8b3e] transition-colors">Work</a>
+                <a href="#expertise" class="hover:text-[#ff8b3e] transition-colors">Expertise</a>
+                <a href="#studio" class="hover:text-[#ff8b3e] transition-colors">Studio</a>
+            </div>
+            <a href="#contact" class="px-4 py-2 bg-[#1b1613] border border-[#54504e] rounded-[4px] font-mono-custom text-xs uppercase tracking-widest text-[#fbf6ec] hover:bg-[#ff8b3e] hover:text-white hover:border-[#ff8b3e] transition-all flex items-center gap-2">
+                Init <iconify-icon icon="solar:arrow-right-linear" width="1.2em"></iconify-icon>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative min-h-screen pt-32 pb-24 md:pt-48 md:pb-40 px-4 md:px-8 max-w-[1684px] mx-auto flex flex-col justify-center">
+        <!-- Live Indicator -->
+        <div class="mb-12 flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-[#ff8b3e] animate-pulse"></div>
+            <span class="font-mono-custom text-xs uppercase tracking-widest text-[#dfd8d3]">SYS.ONLINE // V.1.0</span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-end">
+            <!-- Headline -->
+            <div class="lg:col-span-7">
+                <h1 class="font-serif-custom font-normal text-5xl md:text-7xl lg:text-[7vw] leading-[0.9] tracking-tighter text-[#fbf6ec] mb-8 w-full max-w-3xl">
+                    Architecting the logic of <span class="italic text-[#dfd8d3]">decentralized</span> futures.
+                </h1>
+                <p class="font-sans font-light text-base md:text-lg text-[#dfd8d3] max-w-md leading-relaxed">
+                    We are a digital product design studio engineering high-fidelity interfaces and absolute clarity for Web3 platforms, DeFi protocols, and emerging tech.
+                </p>
+            </div>
+
+            <!-- Abstract UI Fragment (Right side) -->
+            <div class="lg:col-span-5 h-[300px] md:h-[400px] relative w-full lg:max-w-md ml-auto">
+                <div class="absolute inset-0 bracket-box bg-[#1b1613] p-4 flex flex-col justify-between overflow-hidden">
+                    <div class="flex justify-between items-start font-mono-custom text-xs text-[#54504e]">
+                        <span>[DAT.STREAM]</span>
+                        <span>NODE.01</span>
+                    </div>
+                    
+                    <!-- Abstract Data Visualization -->
+                    <div class="flex-1 w-full flex items-center justify-center relative">
+                        <div class="w-full h-full bg-grid-dark absolute inset-0 opacity-50"></div>
+                        
+                        <!-- Floating metrics -->
+                        <div class="relative z-10 w-full px-4 space-y-6">
+                            <div>
+                                <div class="flex justify-between font-mono-custom text-xs text-[#dfd8d3] mb-2 uppercase tracking-widest">
+                                    <span>Latency</span>
+                                    <span>12ms</span>
+                                </div>
+                                <div class="w-full h-[2px] bg-[#54504e]">
+                                    <div class="w-1/3 h-full bg-[#dfd8d3]"></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between font-mono-custom text-xs text-[#dfd8d3] mb-2 uppercase tracking-widest">
+                                    <span>Throughput</span>
+                                    <span class="text-[#ff8b3e]">Optimized</span>
+                                </div>
+                                <div class="w-full h-[2px] bg-[#54504e]">
+                                    <div class="w-[85%] h-full bg-[#ff8b3e]"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex justify-between items-end font-mono-custom text-xs text-[#54504e]">
+                        <span>VOL: MAX</span>
+                        <span>T: 49.201</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Client Bar -->
+    <div class="border-y border-[#54504e] py-6 overflow-hidden bg-[#1b1613]">
+        <div class="max-w-[1684px] mx-auto px-4 md:px-8 flex flex-col md:flex-row items-center gap-6 md:gap-16">
+            <span class="font-mono-custom text-xs text-[#54504e] uppercase tracking-widest whitespace-nowrap">Trusted By</span>
+            <div class="flex flex-wrap md:flex-nowrap justify-between w-full gap-8 font-serif-custom font-normal text-lg md:text-xl text-[#dfd8d3] tracking-tighter uppercase opacity-70">
+                <span>Aave</span>
+                <span>Polygon</span>
+                <span>Lens Protocol</span>
+                <span>Arbitrum</span>
+                <span>Zora</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selected Work Section -->
+    <section id="work" class="pt-24 md:pt-40 pb-20 max-w-[1684px] mx-auto px-4 md:px-8">
+        <div class="flex items-end justify-between mb-12">
+            <h2 class="font-mono-custom text-xs text-[#ff8b3e] uppercase tracking-widest border-b border-[#ff8b3e] pb-1 inline-block">
+                01 / Selected Work
+            </h2>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-y-16 md:gap-x-8 md:gap-y-24">
+            
+            <!-- Project 1 -->
+            <a href="#" class="group block hover-trigger">
+                <div class="relative w-full aspect-[4/3] bg-[#1b1613] border border-[#54504e] mb-6 overflow-hidden p-6 flex flex-col justify-between">
+          <img src="media/dunes.jpg" alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy">
+        </div>
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-serif-custom font-normal text-2xl md:text-3xl text-[#fbf6ec] tracking-tight mb-2 group-hover:text-[#ff8b3e] transition-colors">Liquidity Matrix</h3>
+                        <p class="font-sans font-light text-sm text-[#dfd8d3]">DeFi Exchange Protocol</p>
+                    </div>
+                    <span class="font-mono-custom text-xs text-[#54504e]">2023</span>
+                </div>
+            </a>
+
+            <!-- Project 2 (Asymmetric alignment) -->
+            <a href="#" class="group block md:mt-24 hover-trigger">
+                <div class="relative w-full aspect-[4/3] bg-[#1b1613] border border-[#54504e] mb-6 overflow-hidden p-6">
+          <img src="media/silhouette.jpg" alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy">
+        </div>
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-serif-custom font-normal text-2xl md:text-3xl text-[#fbf6ec] tracking-tight mb-2 group-hover:text-[#ff8b3e] transition-colors">Aura Network</h3>
+                        <p class="font-sans font-light text-sm text-[#dfd8d3]">Digital Identity Platform</p>
+                    </div>
+                    <span class="font-mono-custom text-xs text-[#54504e]">2024</span>
+                </div>
+            </a>
+
+            <!-- Project 3 -->
+            <a href="#" class="group block hover-trigger">
+                 <div class="relative w-full aspect-[4/3] bg-[#1b1613] border border-[#54504e] mb-6 overflow-hidden p-6">
+          <img src="media/bw_portrait.jpg" alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy">
+        </div>
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-serif-custom font-normal text-2xl md:text-3xl text-[#fbf6ec] tracking-tight mb-2 group-hover:text-[#ff8b3e] transition-colors">Yield Engine</h3>
+                        <p class="font-sans font-light text-sm text-[#dfd8d3]">Institutional Staking Dashboard</p>
+                    </div>
+                    <span class="font-mono-custom text-xs text-[#54504e]">2023</span>
+                </div>
+            </a>
+        </div>
+    </section>
+
+    <!-- Expertise Section (Grid) -->
+    <section id="expertise" class="max-w-[1684px] mx-auto px-4 md:px-8 py-24 border-t border-[#54504e]">
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-0">
+            <!-- Sidebar -->
+            <div class="md:col-span-3 md:pr-8">
+                 <h2 class="font-mono-custom text-xs text-[#dfd8d3] uppercase tracking-widest mb-4">
+                    02 / Capabilities
+                </h2>
+                <p class="font-serif-custom font-normal text-2xl md:text-3xl text-[#fbf6ec] tracking-tight w-3/4">
+                    Translating complex protocols into human utility.
+                </p>
+            </div>
+            
+            <!-- Grid list -->
+            <div class="md:col-span-9 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 border-l md:border-l border-[#54504e] border-t md:border-t-0 border-[#54504e]">
+                
+                <!-- Item -->
+                <div class="p-6 md:p-8 border-b border-r border-[#54504e] hover:bg-[#1b1613] transition-colors">
+                    <span class="font-mono-custom text-xs text-[#ff8b3e] block mb-12">001</span>
+                    <h4 class="font-sans font-normal text-lg text-[#fbf6ec] mb-3">Product Strategy</h4>
+                    <p class="font-sans font-light text-sm text-[#dfd8d3] leading-relaxed">Defining tokenomics integration, user journeys, and market positioning for emerging platforms.</p>
+                </div>
+                
+                <div class="p-6 md:p-8 border-b border-r border-[#54504e] hover:bg-[#1b1613] transition-colors">
+                    <span class="font-mono-custom text-xs text-[#54504e] block mb-12">002</span>
+                    <h4 class="font-sans font-normal text-lg text-[#fbf6ec] mb-3">Web3 UX/UI</h4>
+                    <p class="font-sans font-light text-sm text-[#dfd8d3] leading-relaxed">Designing intuitive interfaces that abstract blockchain complexity without obscuring critical data.</p>
+                </div>
+                
+                <div class="p-6 md:p-8 border-b border-r lg:border-r-0 border-[#54504e] hover:bg-[#1b1613] transition-colors">
+                    <span class="font-mono-custom text-xs text-[#54504e] block mb-12">003</span>
+                    <h4 class="font-sans font-normal text-lg text-[#fbf6ec] mb-3">Design Systems</h4>
+                    <p class="font-sans font-light text-sm text-[#dfd8d3] leading-relaxed">Scalable, component-driven visual languages built for rapid iteration and technical integration.</p>
+                </div>
+
+                <div class="p-6 md:p-8 border-b md:border-b-0 border-r border-[#54504e] hover:bg-[#1b1613] transition-colors">
+                    <span class="font-mono-custom text-xs text-[#54504e] block mb-12">004</span>
+                    <h4 class="font-sans font-normal text-lg text-[#fbf6ec] mb-3">Data Visualization</h4>
+                    <p class="font-sans font-light text-sm text-[#dfd8d3] leading-relaxed">Turning raw on-chain telemetry into actionable, legible visual narratives for users.</p>
+                </div>
+
+                <div class="p-6 md:p-8 border-b md:border-b-0 border-r border-[#54504e] hover:bg-[#1b1613] transition-colors">
+                    <span class="font-mono-custom text-xs text-[#54504e] block mb-12">005</span>
+                    <h4 class="font-sans font-normal text-lg text-[#fbf6ec] mb-3">Prototyping</h4>
+                    <p class="font-sans font-light text-sm text-[#dfd8d3] leading-relaxed">High-fidelity interactive models to validate interactions and secure stakeholder alignment.</p>
+                </div>
+
+                 <div class="p-6 md:p-8 border-r lg:border-r-0 border-[#54504e] hover:bg-[#1b1613] transition-colors">
+                    <span class="font-mono-custom text-xs text-[#54504e] block mb-12">006</span>
+                    <h4 class="font-sans font-normal text-lg text-[#fbf6ec] mb-3">Brand Architecture</h4>
+                    <p class="font-sans font-light text-sm text-[#dfd8d3] leading-relaxed">Crafting distinct, authoritative visual identities that signal trust in trustless environments.</p>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Studio / Approach (Light Mode Transition) -->
+    <section id="studio" class="bg-[#fbf6ec] text-[#0f0c0b] py-32 md:py-48 light-mode relative">
+        <div class="max-w-[1684px] mx-auto px-4 md:px-8">
+            
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-8 items-start mb-24">
+                <div class="md:col-span-4">
+                    <h2 class="font-mono-custom text-xs text-[#ff8b3e] uppercase tracking-widest border-b border-[#ff8b3e] pb-1 inline-block">
+                        03 / The Studio
+                    </h2>
+                </div>
+                <div class="md:col-span-8">
+                    <h3 class="font-serif-custom font-normal text-4xl md:text-6xl lg:text-[6vw] leading-[0.95] tracking-tighter mb-8 max-w-4xl">
+                        We build systems, not just screens. Architecture for the trustless era.
+                    </h3>
+                    <div class="flex flex-col md:flex-row gap-8 max-w-2xl font-sans font-light text-base md:text-lg text-[#1b1613] leading-relaxed">
+                        <p class="flex-1">
+                            The next iteration of the web demands more than aesthetic polish. It requires a fundamental understanding of cryptography, financial primitives, and decentralized networks.
+                        </p>
+                        <p class="flex-1">
+                            We exist at the intersection of high-end editorial design and brutalist engineering, transforming complex protocol logic into interfaces that feel inevitable.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Process Brackets -->
+            <div class="mt-32">
+                 <h2 class="font-mono-custom text-xs text-[#54504e] uppercase tracking-widest mb-8 text-center">
+                    Deployment Pipeline
+                </h2>
+                <div class="bracket-box light-theme p-8 md:p-16 flex flex-col md:flex-row justify-between gap-12 bg-white">
+                    
+                    <div class="flex-1 relative">
+                        <span class="font-mono-custom text-xs text-[#b1aca6] block mb-4">PHASE .01</span>
+                        <h4 class="font-sans font-normal text-xl text-[#0f0c0b] mb-2 border-b border-[#dfd8d3] pb-4">Logic Definition</h4>
+                        <p class="font-sans font-light text-sm text-[#54504e] pt-2">Mapping technical constraints, user flows, and contract interactions before a single pixel is placed.</p>
+                    </div>
+                    
+                    <div class="hidden md:block w-px bg-[#dfd8d3]"></div>
+
+                    <div class="flex-1 relative">
+                        <span class="font-mono-custom text-xs text-[#b1aca6] block mb-4">PHASE .02</span>
+                        <h4 class="font-sans font-normal text-xl text-[#0f0c0b] mb-2 border-b border-[#dfd8d3] pb-4">Structural Wireframes</h4>
+                        <p class="font-sans font-light text-sm text-[#54504e] pt-2">Establishing the skeletal grid, information hierarchy, and data visualization strategies.</p>
+                    </div>
+
+                    <div class="hidden md:block w-px bg-[#dfd8d3]"></div>
+
+                    <div class="flex-1 relative">
+                        <span class="font-mono-custom text-xs text-[#b1aca6] block mb-4">PHASE .03</span>
+                        <h4 class="font-sans font-normal text-xl text-[#0f0c0b] mb-2 border-b border-[#dfd8d3] pb-4">Fidelity Output</h4>
+                        <p class="font-sans font-light text-sm text-[#54504e] pt-2">Applying the visual language, typography, and precise motion curves to the interface layer.</p>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Data / Proof Section (Light Mode) -->
+    <section class="bg-[#fbf6ec] pb-32">
+        <div class="max-w-[1684px] mx-auto px-4 md:px-8 border-y border-[#dfd8d3]">
+            <div class="grid grid-cols-2 md:grid-cols-4 divide-x divide-y divide-[#dfd8d3] md:divide-y-0 text-center">
+                
+                <div class="py-16 md:py-24 px-4">
+                    <div class="font-serif-custom font-normal text-5xl md:text-7xl text-[#0f0c0b] tracking-tighter mb-2">$4B+</div>
+                    <div class="font-mono-custom text-xs text-[#54504e] uppercase tracking-widest">Volume Designed For</div>
+                </div>
+                
+                <div class="py-16 md:py-24 px-4 border-t-0">
+                    <div class="font-serif-custom font-normal text-5xl md:text-7xl text-[#0f0c0b] tracking-tighter mb-2">12</div>
+                    <div class="font-mono-custom text-xs text-[#54504e] uppercase tracking-widest">Protocols Launched</div>
+                </div>
+
+                <div class="py-16 md:py-24 px-4">
+                    <div class="font-serif-custom font-normal text-5xl md:text-7xl text-[#0f0c0b] tracking-tighter mb-2">99%</div>
+                    <div class="font-mono-custom text-xs text-[#54504e] uppercase tracking-widest">Uptime Aesthetics</div>
+                </div>
+
+                <div class="py-16 md:py-24 px-4">
+                    <div class="font-serif-custom font-normal text-5xl md:text-7xl text-[#0f0c0b] tracking-tighter mb-2">01</div>
+                    <div class="font-mono-custom text-xs text-[#54504e] uppercase tracking-widest">Mission Critical Focus</div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA (Dark block on Light bg) -->
+    <section id="contact" class="bg-[#fbf6ec] pb-32 md:pb-48 px-4 md:px-8">
+        <div class="max-w-[1684px] mx-auto bg-[#0f0c0b] rounded-[4px] p-8 md:p-24 flex flex-col items-center text-center relative overflow-hidden">
+             <!-- Background detail -->
+             <div class="absolute top-0 left-0 w-full h-full bg-grid-dark opacity-10 pointer-events-none"></div>
+             
+             <div class="relative z-10">
+                <span class="font-mono-custom text-xs text-[#ff8b3e] uppercase tracking-widest mb-8 block">[ INITIATE_PROTOCOL ]</span>
+                <h2 class="font-serif-custom font-normal text-4xl md:text-6xl text-[#fbf6ec] tracking-tighter mb-12 max-w-2xl mx-auto leading-tight">
+                    Ready to architect your next digital infrastructure?
+                </h2>
+                <a href="mailto:hello@nexus.studio" class="inline-flex items-center gap-3 px-8 py-4 bg-[#fbf6ec] text-[#0f0c0b] font-mono-custom text-xs uppercase tracking-widest rounded-[4px] hover:bg-[#ff8b3e] hover:text-white transition-colors">
+                    Start a Project <iconify-icon icon="solar:arrow-right-linear" width="1.2em"></iconify-icon>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-[#0f0c0b] border-t border-[#54504e] py-12 px-4 md:px-8">
+        <div class="max-w-[1684px] mx-auto flex flex-col md:flex-row justify-between items-center gap-8 font-mono-custom text-xs text-[#54504e] uppercase tracking-widest">
+            
+            <div class="font-serif-custom font-normal text-lg tracking-tight text-[#dfd8d3]">
+                NEXUS
+            </div>
+            
+            <div class="flex gap-8">
+                <a href="#" class="hover:text-[#dfd8d3] transition-colors">Twitter (X)</a>
+                <a href="#" class="hover:text-[#dfd8d3] transition-colors">GitHub</a>
+                <a href="#" class="hover:text-[#dfd8d3] transition-colors">Figma</a>
+            </div>
+
+            <div>
+                © 2024 Nexus Design Studio. All nodes active.
+            </div>
+
+        </div>
+    </footer>
+
+
+</body></html>

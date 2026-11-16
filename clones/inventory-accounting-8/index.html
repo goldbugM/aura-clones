@@ -1,0 +1,906 @@
+<html lang="fa" dir="rtl"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>کالا و خدمات - حسابداری</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.0.0/Vazirmatn-font-face.css" rel="stylesheet" type="text/css">
+<style>
+body {
+font-family: 'Vazirmatn', sans-serif;
+}
+/* Custom scrollbar for modal */
+.custom-scrollbar::-webkit-scrollbar {
+width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+background-color: #e5e7eb;
+border-radius: 20px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+background-color: #d1d5db;
+}
+</style>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+<body class="bg-gray-50 text-gray-900 h-screen flex flex-col overflow-hidden selection:bg-blue-100 selection:text-blue-900">
+
+    <!-- Top Header -->
+    <header class="flex w-full bg-white border-b border-gray-200 z-10 shrink-0">
+        <!-- Sidebar Header (Right) -->
+        <div class="w-80 border-e border-gray-200 h-14 flex items-center justify-between px-4 shrink-0">
+            <div class="flex items-center gap-3">
+                <button class="text-gray-500 hover:text-gray-900 transition-colors">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <h1 class="text-base font-semibold tracking-tight">کالا و خدمات (۱۷)</h1>
+            </div>
+            <div class="flex items-center gap-1">
+                <button class="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md transition-colors">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                </button>
+                <button class="flex items-center gap-1 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 px-2 py-1.5 rounded-md transition-colors">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span>جدید</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Area Header (Left) -->
+        <div class="flex-1 h-14 flex items-center justify-between px-4">
+            <h2 class="text-base font-semibold text-gray-800 absolute left-1/2 -translate-x-1/2">حسابداری موج</h2>
+            <div></div> <!-- Spacer -->
+            <div class="flex items-center gap-2">
+                <button class="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
+                    <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+                </button>
+                <button class="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-50 rounded-lg transition-colors">
+                    <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Layout -->
+    <main class="flex flex-1 overflow-hidden">
+        <!-- Sidebar -->
+        <aside class="w-80 bg-gray-50/50 border-e border-gray-200 flex flex-col shrink-0">
+            <div class="p-3">
+                <div class="relative flex items-center gap-2">
+                    <button class="bg-indigo-900 text-white p-2 rounded-lg hover:bg-indigo-800 transition-colors shrink-0 shadow-sm">
+                        <i data-lucide="folder-plus" class="w-5 h-5"></i>
+                    </button>
+                    <div class="relative flex-1">
+                        <input type="text" placeholder="جستجو..." class="w-full bg-white border border-gray-300 text-sm rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 block ps-10 p-2 outline-none transition-all placeholder:text-gray-400">
+                        <div class="absolute inset-y-0 start-0 flex items-center ps-3 pointer-events-none text-gray-400">
+                            <i data-lucide="search" class="w-4 h-4"></i>
+                        </div>
+                        <div class="absolute inset-y-0 end-0 flex items-center pe-3 pointer-events-none text-gray-400">
+                            <i data-lucide="scan-line" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto">
+                <nav class="space-y-1 p-2">
+                    <a href="#" class="flex items-center justify-between px-3 py-2.5 bg-indigo-100/50 text-indigo-950 rounded-lg group">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="chevron-left" class="w-4 h-4 text-indigo-400 group-hover:text-indigo-600"></i>
+                            <span class="text-sm font-medium">بدون دسته (0)</span>
+                        </div>
+                        <div class="w-6 h-6 rounded-full bg-indigo-900 text-white flex items-center justify-center text-xs font-medium"></div>
+                    </a>
+                    <!-- More categories would go here -->
+                </nav>
+            </div>
+        </aside>
+
+        <!-- Main Area (Empty State) -->
+        <div class="flex-1 bg-white overflow-y-auto relative">
+            <div class="min-h-full flex flex-col items-center py-16 px-6 sm:px-12 max-w-5xl mx-auto">
+                
+                <!-- Hero Illustration / Icon -->
+                <div class="w-20 h-20 bg-blue-50 rounded-2xl flex items-center justify-center mb-6 shadow-sm border border-blue-100/50">
+                    <i data-lucide="package-open" class="w-10 h-10 text-blue-600"></i>
+                </div>
+
+                <h3 class="text-2xl font-semibold tracking-tight text-gray-900 mb-3 text-center">محصولات خود را سریع‌تر اضافه کنید</h3>
+                <p class="text-base text-gray-500 text-center max-w-xl mb-10 leading-relaxed">
+                    لیست کالا و خدمات شما در حال حاضر خالی است. برای شروع، می‌توانید از لیست‌های آماده بر اساس صنف کاری خود استفاده کنید و یا فایل اکسل خود را مستقیماً وارد نمایید.
+                </p>
+
+                <!-- Templates Grid -->
+                <div class="w-full">
+                    <div class="flex items-center justify-between mb-4 px-1">
+                        <h4 class="text-base font-medium text-gray-900">لیست‌های آماده بر اساس صنف</h4>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- Card 1 -->
+                        <div onclick="openModal('لوازم یدکی خودرو')" class="group relative flex flex-col p-5 bg-white border border-gray-200 rounded-xl hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer transition-all duration-200 text-start">
+                            <div class="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200">
+                                <i data-lucide="wrench" class="w-5 h-5 text-orange-600"></i>
+                            </div>
+                            <h5 class="text-base font-medium text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">لوازم یدکی</h5>
+                            <p class="text-sm text-gray-500 line-clamp-2">شامل انواع قطعات موتور، بدنه، مصرفی و لوازم جانبی خودرو</p>
+                        </div>
+
+                        <!-- Card 2 -->
+                        <div onclick="openModal('ابزارآلات و یراق')" class="group relative flex flex-col p-5 bg-white border border-gray-200 rounded-xl hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer transition-all duration-200 text-start">
+                            <div class="w-10 h-10 rounded-lg bg-stone-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200">
+                                <i data-lucide="hammer" class="w-5 h-5 text-stone-600"></i>
+                            </div>
+                            <h5 class="text-base font-medium text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">ابزارآلات</h5>
+                            <p class="text-sm text-gray-500 line-clamp-2">ابزارهای دستی، برقی، صنعتی و تجهیزات ایمنی کار</p>
+                        </div>
+
+                        <!-- Card 3 -->
+                        <div onclick="openModal('پوشاک و لباس')" class="group relative flex flex-col p-5 bg-white border border-gray-200 rounded-xl hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer transition-all duration-200 text-start">
+                            <div class="w-10 h-10 rounded-lg bg-pink-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200">
+                                <i data-lucide="shirt" class="w-5 h-5 text-pink-600"></i>
+                            </div>
+                            <h5 class="text-base font-medium text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">پوشاک بانوان و آقایان</h5>
+                            <p class="text-sm text-gray-500 line-clamp-2">انواع لباس، کیف، کفش و اکسسوری با دسته‌بندی فصلی</p>
+                        </div>
+
+                        <!-- Card 4 -->
+                        <div onclick="openModal('سوپرمارکت و هایپر')" class="group relative flex flex-col p-5 bg-white border border-gray-200 rounded-xl hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer transition-all duration-200 text-start">
+                            <div class="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200">
+                                <i data-lucide="shopping-basket" class="w-5 h-5 text-green-600"></i>
+                            </div>
+                            <h5 class="text-base font-medium text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">سوپرمارکت</h5>
+                            <p class="text-sm text-gray-500 line-clamp-2">مواد غذایی، لبنیات، تنقلات و لوازم شوینده و بهداشتی</p>
+                        </div>
+
+                        <!-- Card 5 -->
+                        <div onclick="openModal('لوازم آرایشی و بهداشتی')" class="group relative flex flex-col p-5 bg-white border border-gray-200 rounded-xl hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer transition-all duration-200 text-start">
+                            <div class="w-10 h-10 rounded-lg bg-fuchsia-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200">
+                                <i data-lucide="sparkles" class="w-5 h-5 text-fuchsia-600"></i>
+                            </div>
+                            <h5 class="text-base font-medium text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">آرایشی و بهداشتی</h5>
+                            <p class="text-sm text-gray-500 line-clamp-2">محصولات مراقبت پوست، مو، لوازم آرایش و عطر</p>
+                        </div>
+
+                         <!-- Card 6 -->
+                         <div onclick="openModal('کافه و رستوران')" class="group relative flex flex-col p-5 bg-white border border-gray-200 rounded-xl hover:border-blue-500 hover:shadow-md hover:shadow-blue-500/5 cursor-pointer transition-all duration-200 text-start">
+                            <div class="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-200">
+                                <i data-lucide="coffee" class="w-5 h-5 text-amber-600"></i>
+                            </div>
+                            <h5 class="text-base font-medium text-gray-900 mb-1 group-hover:text-blue-600 transition-colors">کافه و رستوران</h5>
+                            <p class="text-sm text-gray-500 line-clamp-2">منوی غذا، نوشیدنی‌های گرم و سرد، پیش‌غذا و دسر</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Divider -->
+                <div class="flex items-center w-full my-8">
+                    <div class="flex-1 border-t border-gray-200"></div>
+                    <span class="px-4 text-sm text-gray-400 font-medium">یا</span>
+                    <div class="flex-1 border-t border-gray-200"></div>
+                </div>
+
+                <!-- Excel Import Action -->
+                <button class="flex items-center gap-3 px-6 py-3 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 hover:text-gray-900 transition-all duration-200 shadow-sm font-medium">
+                    <i data-lucide="file-spreadsheet" class="w-5 h-5 text-emerald-600"></i>
+                    <span>ورود اطلاعات از طریق فایل اکسل</span>
+                </button>
+
+            </div>
+        </div>
+    </main>
+
+    <!-- Selection Modal -->
+    <div id="selection-modal" class="fixed inset-0 z-50 hidden opacity-0 transition-opacity duration-300" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <!-- Backdrop -->
+        <div class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm transition-opacity" onclick="closeModal()"></div>
+
+        <div class="fixed inset-0 z-10 w-screen overflow-y-auto">
+            <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                
+                <!-- Modal Panel -->
+                <div class="relative transform overflow-hidden rounded-2xl bg-white text-start shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-4xl flex flex-col max-h-[85vh] scale-95 opacity-0 duration-300 ease-out" id="modal-panel">
+                    
+                    <!-- Modal Header -->
+                    <div class="bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+                        <div>
+                            <h3 class="text-lg font-semibold tracking-tight text-gray-900" id="modal-title">افزودن از لیست آماده: <span>نام صنف</span></h3>
+                            <p class="text-sm text-gray-500 mt-1">محصولات مورد نظر را انتخاب کرده و قیمت و موجودی اولیه را وارد کنید.</p>
+                        </div>
+                        <button type="button" onclick="closeModal()" class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-500 transition-colors outline-none focus:ring-2 focus:ring-blue-500/40">
+                            <span class="sr-only">بستن</span>
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+
+                    <!-- Modal Body (Table) -->
+                    <div class="flex-1 overflow-y-auto custom-scrollbar p-6 bg-gray-50/30">
+                        <div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                            <!-- Table Header -->
+                            <div class="grid grid-cols-12 gap-4 px-4 py-3 bg-gray-50/80 border-b border-gray-200 text-sm font-medium text-gray-500">
+                                <div class="col-span-1 flex items-center justify-center">
+                                    <label class="relative flex items-center justify-center cursor-pointer">
+                                        <input type="checkbox" class="peer sr-only" id="select-all">
+                                        <div class="w-5 h-5 rounded border border-gray-300 bg-white peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+                                            <i data-lucide="check" class="w-3.5 h-3.5 text-white opacity-0 peer-checked:opacity-100"></i>
+                                        </div>
+                                    </label>
+                                </div>
+                                <div class="col-span-5 flex items-center">نام کالا / خدمات</div>
+                                <div class="col-span-2 flex items-center">دسته‌بندی</div>
+                                <div class="col-span-2 flex items-center">قیمت فروش (تومان)</div>
+                                <div class="col-span-2 flex items-center">موجودی اولیه</div>
+                            </div>
+
+                            <!-- Table Rows (Simulated Data) -->
+                            <div class="divide-y divide-gray-100">
+                                <!-- Row 1 -->
+                                <div class="grid grid-cols-12 gap-4 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors group">
+                                    <div class="col-span-1 flex items-center justify-center">
+                                        <label class="relative flex items-center justify-center cursor-pointer">
+                                            <input type="checkbox" class="peer sr-only">
+                                            <div class="w-5 h-5 rounded border border-gray-300 bg-white peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+                                                <i data-lucide="check" class="w-3.5 h-3.5 text-white opacity-0 peer-checked:opacity-100"></i>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="col-span-5">
+                                        <p class="text-sm font-medium text-gray-900">لنت ترمز جلو پراید برند X</p>
+                                        <p class="text-xs text-gray-500 mt-0.5">کد: P-102</p>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-medium">قطعات مصرفی</span>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="text" placeholder="۰" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="number" placeholder="۱" min="0" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300 text-center" dir="ltr">
+                                    </div>
+                                </div>
+
+                                <!-- Row 2 -->
+                                <div class="grid grid-cols-12 gap-4 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors group">
+                                    <div class="col-span-1 flex items-center justify-center">
+                                        <label class="relative flex items-center justify-center cursor-pointer">
+                                            <input type="checkbox" class="peer sr-only" checked="">
+                                            <div class="w-5 h-5 rounded border border-gray-300 bg-white peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+                                                <i data-lucide="check" class="w-3.5 h-3.5 text-white opacity-0 peer-checked:opacity-100"></i>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="col-span-5">
+                                        <p class="text-sm font-medium text-gray-900">روغن موتور ۱۰W۴۰ چهار لیتری</p>
+                                        <p class="text-xs text-gray-500 mt-0.5">کد: O-505</p>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-medium">روغن و روانکار</span>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="text" value="۵۵۰,۰۰۰" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="number" value="12" min="0" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300 text-center" dir="ltr">
+                                    </div>
+                                </div>
+                                
+                                <!-- Row 3 -->
+                                <div class="grid grid-cols-12 gap-4 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors group">
+                                    <div class="col-span-1 flex items-center justify-center">
+                                        <label class="relative flex items-center justify-center cursor-pointer">
+                                            <input type="checkbox" class="peer sr-only">
+                                            <div class="w-5 h-5 rounded border border-gray-300 bg-white peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+                                                <i data-lucide="check" class="w-3.5 h-3.5 text-white opacity-0 peer-checked:opacity-100"></i>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="col-span-5">
+                                        <p class="text-sm font-medium text-gray-900">فیلتر هوا پژو ۲۰۶ تیپ ۲</p>
+                                        <p class="text-xs text-gray-500 mt-0.5">کد: F-221</p>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-medium">فیلترها</span>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="text" placeholder="۰" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="number" placeholder="۱" min="0" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300 text-center" dir="ltr">
+                                    </div>
+                                </div>
+                                
+                                <!-- Row 4 -->
+                                <div class="grid grid-cols-12 gap-4 px-4 py-3 items-center hover:bg-gray-50/50 transition-colors group">
+                                    <div class="col-span-1 flex items-center justify-center">
+                                        <label class="relative flex items-center justify-center cursor-pointer">
+                                            <input type="checkbox" class="peer sr-only" checked="">
+                                            <div class="w-5 h-5 rounded border border-gray-300 bg-white peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-all flex items-center justify-center">
+                                                <i data-lucide="check" class="w-3.5 h-3.5 text-white opacity-0 peer-checked:opacity-100"></i>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="col-span-5">
+                                        <p class="text-sm font-medium text-gray-900">شمع موتور پایه کوتاه NGK</p>
+                                        <p class="text-xs text-gray-500 mt-0.5">کد: S-44</p>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-medium">سیستم احتراق</span>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="text" value="۱۲۰,۰۰۰" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300">
+                                    </div>
+                                    <div class="col-span-2">
+                                        <input type="number" value="40" min="0" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white hover:border-gray-300 text-center" dir="ltr">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Modal Footer -->
+                    <div class="bg-gray-50 px-6 py-4 flex items-center justify-between border-t border-gray-100 shrink-0">
+                        <div class="text-sm text-gray-500">
+                            <span class="font-medium text-gray-900">۲</span> کالا انتخاب شده است
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                                انصراف
+                            </button>
+                            <button type="button" class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors shadow-sm flex items-center gap-2">
+                                <i data-lucide="check" class="w-4 h-4"></i>
+                                افزودن کالاها
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Initialize Icons & Modal Logic -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        // Initialize lucide icons with specific stroke width
+        lucide.createIcons({
+            strokeWidth: 1.5
+        });
+
+        // Modal Logic
+        const modal = document.getElementById('selection-modal');
+        const modalPanel = document.getElementById('modal-panel');
+        const modalTitleSpan = document.querySelector('#modal-title span');
+
+        function openModal(categoryName) {
+            modalTitleSpan.textContent = categoryName;
+            modal.classList.remove('hidden');
+            
+            // Trigger animation
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modalPanel.classList.remove('scale-95', 'opacity-0');
+                modalPanel.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        function closeModal() {
+            modal.classList.add('opacity-0');
+            modalPanel.classList.remove('scale-100', 'opacity-100');
+            modalPanel.classList.add('scale-95', 'opacity-0');
+            
+            // Wait for animation to finish before hiding
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
+        // Select All Checkbox Logic (Visual only for demo)
+        const selectAll = document.getElementById('select-all');
+        const rowCheckboxes = document.querySelectorAll('.divide-y input[type="checkbox"]');
+        
+        if(selectAll) {
+            selectAll.addEventListener('change', (e) => {
+                rowCheckboxes.forEach(cb => {
+                    cb.checked = e.target.checked;
+                });
+            });
+        }
+    </script>
+
+</body></html>

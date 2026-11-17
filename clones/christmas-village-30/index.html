@@ -1,0 +1,1163 @@
+<html lang="fr"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<!-- Un village de Noël chaleureux, à découvrir et à partager. -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#064E38">
+<title>Marché de Noël des Aiguerelles 2026 | Village de Noël à Mauguio</title>
+<meta name="description" content="Rendez-vous samedi 12 décembre 2026 au Village de Noël des Aiguerelles à Mauguio : artisans, créateurs, animations, Père Noël, calèche gratuite et gourmandises. Entrée gratuite de 9 h 30 à 17 h 30.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;450;500;550;600&family=Great+Vibes&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+
+<body class="bg-[#FFF9ED] text-[#25251F] antialiased selection:bg-[#D6A14B]/30" style="font-family:'DM Sans',sans-serif;">
+  <a href="#contenu" class="sr-only z-[100] bg-white p-4 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Aller au contenu</a>
+
+  <!-- Bandeau et navigation -->
+  <div class="bg-[#064E38] px-5 py-2.5 text-center text-xs font-medium tracking-wide text-[#FFF9ED]">
+    <span class="inline-flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+      <span class="text-[#D6A14B]" aria-hidden="true">✦</span>
+      Samedi 12 décembre 2026
+      <span class="text-[#D6A14B]" aria-hidden="true">·</span>
+      Mauguio
+      <span class="text-[#D6A14B]" aria-hidden="true">·</span>
+      Entrée gratuite, petits et grands bienvenus !
+      <span class="hidden text-[#D6A14B] sm:inline" aria-hidden="true">✦</span>
+    </span>
+  </div>
+
+  <header class="sticky top-0 z-50 border-b border-[#064E38]/10 bg-[#FFF9ED]/95 backdrop-blur-lg">
+    <div class="mx-auto flex max-w-[1440px] items-center justify-between gap-6 px-5 py-4 md:px-10 lg:px-14">
+      <a href="#accueil" class="shrink-0 text-[#064E38]" aria-label="Les Aiguerelles, accueil">
+        <span class="block text-2xl font-semibold tracking-tight" style="font-family:'Cormorant Garamond',serif;">Les Aiguerelles<span class="ml-1 text-[#B51F25]">.</span></span>
+        <span class="mt-0.5 block text-[0.625rem] uppercase tracking-[0.14em] sm:text-xs">Village de Noël 2026 · Mauguio</span>
+      </a>
+      <nav class="hidden items-center gap-6 text-xs font-medium xl:flex" aria-label="Navigation principale">
+        <a href="#accueil" class="transition-colors hover:text-[#B51F25]">Accueil</a>
+        <a href="#marche" class="transition-colors hover:text-[#B51F25]">Le marché</a>
+        <a href="#animations" class="transition-colors hover:text-[#B51F25]">Les animations</a>
+        <a href="#infos-pratiques" class="transition-colors hover:text-[#B51F25]">Informations pratiques</a>
+        <a href="#contact" class="transition-colors hover:text-[#B51F25]">Contact</a>
+      </nav>
+      <div class="flex items-center gap-3">
+        <a href="#infos-pratiques" class="hidden items-center gap-3 rounded-sm bg-[#B51F25] px-5 py-3 text-xs font-medium text-white transition-colors hover:bg-[#94191E] sm:inline-flex">
+          Préparer ma visite
+          <iconify-icon icon="solar:arrow-right-linear" width="17" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+        </a>
+        <button id="menu-toggle" type="button" class="flex h-11 w-11 items-center justify-center rounded-sm border border-[#064E38]/20 text-[#064E38] xl:hidden" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="menu-mobile">
+          <iconify-icon id="menu-icon" icon="solar:hamburger-menu-linear" width="25" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+        </button>
+      </div>
+    </div>
+    <nav id="menu-mobile" class="hidden border-t border-[#064E38]/10 px-5 pb-5 pt-2 xl:hidden" aria-label="Navigation mobile">
+      <div class="mx-auto flex max-w-7xl flex-col text-sm">
+        <a href="#accueil" class="border-b border-[#064E38]/10 py-3">Accueil</a>
+        <a href="#marche" class="border-b border-[#064E38]/10 py-3">Le marché</a>
+        <a href="#animations" class="border-b border-[#064E38]/10 py-3">Les animations</a>
+        <a href="#infos-pratiques" class="border-b border-[#064E38]/10 py-3">Informations pratiques</a>
+        <a href="#contact" class="py-3">Contact</a>
+        <a href="#infos-pratiques" class="mt-2 rounded-sm bg-[#B51F25] p-3 text-center font-medium text-white">Préparer ma visite</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="contenu">
+    <!-- Accueil -->
+    <section id="accueil" class="relative scroll-mt-28 overflow-hidden">
+      <div class="pointer-events-none absolute left-4 top-10 text-3xl text-[#D6A14B]/60 md:left-10" aria-hidden="true">✧</div>
+      <div class="mx-auto grid max-w-[1440px] items-center gap-10 px-5 pb-12 pt-12 md:px-10 md:pb-16 md:pt-16 lg:grid-cols-[1.05fr_1fr] lg:gap-8 lg:px-14 lg:py-16">
+        <div class="relative z-10 lg:pb-6 lg:pr-6">
+          <div class="mb-7 inline-flex items-center gap-2.5 rounded-full border border-[#B51F25]/20 px-3.5 py-2 text-xs font-medium text-[#B51F25]">
+            <span class="h-1.5 w-1.5 rounded-full bg-[#B51F25]"></span>
+            3e édition · Un Noël qui nous rassemble
+          </div>
+          <p class="mb-6 text-xs font-medium uppercase tracking-[0.2em] text-[#064E38]">Les Aiguerelles vous invitent</p>
+          <h1 class="text-5xl leading-[1.05] tracking-tight text-[#064E38] sm:text-6xl lg:text-7xl xl:text-[5.2rem]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">
+            La <span class="text-[#B51F25]" style="font-family:'Great Vibes',cursive;font-weight:400;">magie de Noël</span><br>
+            s’invite aux<br class="hidden lg:block"> Aiguerelles<span class="text-[#B51F25]">.</span>
+          </h1>
+          <p class="mt-6 max-w-lg text-sm leading-7 text-[#25251F]/70 md:text-base">
+            Un village de Noël chaleureux, des artisans passionnés, des animations pour toute la famille et une journée placée sous le signe du partage.
+          </p>
+          <div class="mt-7 flex flex-wrap items-center gap-x-4 gap-y-3 text-xs font-medium text-[#064E38]">
+            <span class="inline-flex items-center gap-2">
+              <iconify-icon icon="solar:calendar-date-linear" width="18" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+              SAMEDI 12 DÉCEMBRE 2026
+            </span>
+            <span class="inline-flex items-center gap-2">
+              <iconify-icon icon="solar:clock-circle-linear" width="18" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+              DE 9 H 30 À 17 H 30
+            </span>
+          </div>
+          <div class="mt-3 inline-flex items-center gap-2 text-xs font-medium text-[#B51F25]">
+            <iconify-icon icon="solar:ticket-linear" width="18" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            ENTRÉE GRATUITE
+            <span class="font-normal text-[#25251F]/55">— et des souvenirs plein la tête.</span>
+          </div>
+          <div class="mt-8 flex flex-wrap gap-3">
+            <a href="#animations" class="inline-flex items-center justify-center gap-4 rounded-sm bg-[#B51F25] px-6 py-4 text-sm font-medium text-white transition-colors hover:bg-[#94191E]">
+              Découvrir le programme
+              <iconify-icon icon="solar:arrow-right-linear" width="19" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </a>
+            <a href="#infos-pratiques" class="inline-flex items-center justify-center gap-2 rounded-sm border border-[#064E38]/25 px-5 py-4 text-sm font-medium text-[#064E38] transition-colors hover:bg-[#064E38]/5">
+              <iconify-icon icon="solar:map-point-linear" width="19" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+              Trouver le lieu
+            </a>
+          </div>
+          <p class="mt-6 flex items-center gap-2 text-xs text-[#25251F]/55">
+            <iconify-icon icon="solar:heart-linear" width="16" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            En famille, entre amis… et même avec votre compagnon à quatre pattes.
+          </p>
+        </div>
+
+        <div class="relative mx-auto w-full max-w-xl pb-6 pl-3 pt-4 lg:pl-4">
+          <div class="pointer-events-none absolute -right-1 top-0 z-20 text-6xl text-[#D6A14B] md:-right-5" aria-hidden="true">✧</div>
+          <div class="absolute bottom-2 left-0 right-4 top-7 rounded-t-[48%] rounded-b-sm border border-[#D6A14B]/65"></div>
+          <div class="relative h-[430px] overflow-hidden rounded-t-[48%] rounded-b-sm bg-[#064E38] sm:h-[540px] lg:h-[600px]">
+            <img src="media/photo-1513297887119-d46091b24bfa.jpg" alt="Un sapin de Noël illuminé et une chaleureuse ambiance de fêtes" class="h-full w-full object-cover" fetchpriority="high" width="1000" height="1200">
+            <div class="absolute inset-0 bg-black/15"></div>
+            <div class="absolute left-5 right-5 top-24 flex justify-between text-[#FFF9ED]/75" aria-hidden="true">
+              <span class="text-xl">✧</span><span class="pt-20 text-xs">✦</span><span class="text-lg">✧</span>
+            </div>
+            <div class="absolute bottom-0 left-0 right-0 bg-[#064E38]/90 p-6 text-center text-[#FFF9ED] backdrop-blur-sm">
+              <p class="text-4xl tracking-tight" style="font-family:'Great Vibes',cursive;">Un petit village, une grande magie.</p>
+              <p class="mt-2 text-xs uppercase tracking-[0.18em]">Les Aiguerelles · Mauguio</p>
+            </div>
+          </div>
+          <div class="absolute -left-2 top-14 z-20 flex h-28 w-28 -rotate-12 flex-col items-center justify-center rounded-full border-[5px] border-[#FFF9ED] bg-[#B51F25] text-[#FFF9ED] shadow-lg sm:-left-8 sm:h-32 sm:w-32">
+            <span class="text-xs" aria-hidden="true">✦</span>
+            <span class="text-3xl leading-none tracking-tight" style="font-family:'Cormorant Garamond',serif;">Ho, ho, ho !</span>
+            <span class="mt-1 text-xs">On vous attend.</span>
+          </div>
+          <div class="absolute -bottom-1 right-2 z-20 rotate-3 rounded-sm bg-[#F8E8C5] px-5 py-3 text-sm text-[#064E38] shadow-sm">
+            <span style="font-family:'Cormorant Garamond',serif;" class="text-lg italic">La liste des cadeaux peut attendre. Pas la magie.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Repères essentiels -->
+    <section class="border-y border-[#064E38]/10 bg-[#F8E8C5]/35" aria-label="L’essentiel en un coup d’œil">
+      <div class="mx-auto grid max-w-[1440px] grid-cols-2 px-5 py-6 md:px-10 lg:grid-cols-4 lg:px-14">
+        <article class="group flex flex-col gap-3 border-b border-r border-[#064E38]/10 p-5 sm:flex-row sm:items-center lg:border-b-0">
+          <iconify-icon icon="solar:calendar-date-linear" width="30" stroke-width="1.5" class="text-[#B51F25] transition-transform group-hover:-translate-y-1" aria-hidden="true"></iconify-icon>
+          <div><h2 class="text-xs uppercase tracking-widest text-[#25251F]/50">Le grand jour</h2><p class="mt-1.5 text-sm font-medium text-[#064E38]">Samedi 12 décembre 2026</p></div>
+        </article>
+        <article class="group flex flex-col gap-3 border-b border-[#064E38]/10 p-5 sm:flex-row sm:items-center lg:border-b-0 lg:border-r">
+          <iconify-icon icon="solar:clock-circle-linear" width="30" stroke-width="1.5" class="text-[#B51F25] transition-transform group-hover:-translate-y-1" aria-hidden="true"></iconify-icon>
+          <div><h2 class="text-xs uppercase tracking-widest text-[#25251F]/50">Prenez votre temps</h2><p class="mt-1.5 text-sm font-medium text-[#064E38]">De 9 h 30 à 17 h 30</p></div>
+        </article>
+        <article class="group flex flex-col gap-3 border-r border-[#064E38]/10 p-5 sm:flex-row sm:items-center">
+          <iconify-icon icon="solar:ticket-linear" width="30" stroke-width="1.5" class="text-[#B51F25] transition-transform group-hover:-translate-y-1" aria-hidden="true"></iconify-icon>
+          <div><h2 class="text-xs uppercase tracking-widest text-[#25251F]/50">Bienvenue à tous</h2><p class="mt-1.5 text-sm font-medium text-[#064E38]">Entrée gratuite</p><p class="mt-1 text-xs text-[#25251F]/60">Animaux acceptés</p></div>
+        </article>
+        <article class="group flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+          <iconify-icon icon="solar:shop-linear" width="30" stroke-width="1.5" class="text-[#B51F25] transition-transform group-hover:-translate-y-1" aria-hidden="true"></iconify-icon>
+          <div><h2 class="text-xs uppercase tracking-widest text-[#25251F]/50">De belles rencontres</h2><p class="mt-1.5 text-sm font-medium text-[#064E38]">60 exposants attendus</p><p class="mt-1 text-xs text-[#25251F]/60">Du local et de la passion</p></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- Bienvenue -->
+    <section id="marche" class="scroll-mt-28 px-5 py-20 md:px-10 lg:px-14 lg:py-28">
+      <div class="mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-2 lg:gap-20">
+        <div class="relative pb-8 pr-6" data-reveal="">
+          <div class="aspect-[4/4.2] overflow-hidden rounded-t-[180px] bg-[#E8DDC6]">
+            <img src="media/photo-1545048702-79362596cdc9.jpg" alt="Décorations de Noël et lumières chaleureuses, une invitation à flâner" width="1000" height="1050" loading="lazy" class="h-full w-full object-cover">
+          </div>
+          <div class="absolute bottom-0 right-0 max-w-[260px] bg-[#064E38] px-7 py-6 text-[#FFF9ED]">
+            <span class="text-[#D6A14B]" aria-hidden="true">✦ ✦ ✦</span>
+            <p class="mt-3 text-2xl leading-tight tracking-tight" style="font-family:'Cormorant Garamond',serif;">Le plus beau cadeau ?<br><span class="italic">Être ensemble.</span></p>
+          </div>
+          <span class="absolute -left-3 top-10 text-5xl text-[#D6A14B]" aria-hidden="true">✧</span>
+        </div>
+        <div data-reveal="">
+          <p class="mb-4 text-xs font-medium uppercase tracking-[0.2em] text-[#B51F25]">Un village, mille petits bonheurs</p>
+          <h2 class="text-4xl leading-[1.1] tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Bienvenue au Village<br>de Noël des Aiguerelles !</h2>
+          <div class="mt-6 space-y-4 text-sm leading-7 text-[#25251F]/70">
+            <p class="text-lg text-[#064E38]" style="font-family:'Cormorant Garamond',serif;">Le temps d’une journée, les Aiguerelles se transforment en un véritable village de Noël chaleureux, familial et féérique.</p>
+            <p>Pour cette nouvelle édition, venez découvrir un marché de Noël traditionnel, avec de nombreux artisans, commerçants et créateurs locaux venus partager leur savoir-faire et proposer de jolies idées cadeaux pour les fêtes.</p>
+            <p>Que vous veniez chercher vos cadeaux, découvrir des créateurs locaux, profiter des animations, écouter quelques chants de Noël, rencontrer le Père Noël ou simplement passer un bon moment en famille, le Village de Noël des Aiguerelles vous attend !</p>
+            <p>Ici, Noël se vit avant tout comme un moment de partage et de proximité. Enfants, familles, visiteurs, artisans, bénévoles et résidents se retrouvent dans une ambiance conviviale et chaleureuse.</p>
+          </div>
+          <div class="mt-7 flex items-center gap-4 border-t border-[#064E38]/15 pt-6">
+            <span class="text-5xl tracking-tight text-[#B51F25]" style="font-family:'Cormorant Garamond',serif;">3<sup class="text-xl">e</sup></span>
+            <div class="text-xs leading-5 text-[#25251F]/65"><span class="font-medium text-[#064E38]">édition, toujours le même cœur.</span><br>Associations, école de musique et passionnés du local.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Exposants -->
+    <section class="bg-[#F8E8C5]/40 px-5 py-20 md:px-10 lg:px-14">
+      <div class="mx-auto max-w-7xl">
+        <div class="mb-10 flex flex-col justify-between gap-5 md:flex-row md:items-end" data-reveal="">
+          <div>
+            <p class="mb-4 text-xs font-medium uppercase tracking-[0.2em] text-[#B51F25]">Flâner, dénicher, s’émerveiller</p>
+            <h2 class="max-w-2xl text-4xl leading-[1.1] tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Des trésors à découvrir<br>au détour des allées</h2>
+          </div>
+          <p class="max-w-xs text-sm leading-6 text-[#25251F]/65"><span class="font-medium text-[#064E38]">60 exposants attendus</span>, des savoir-faire locaux et autant de bonnes raisons de prendre son temps.</p>
+        </div>
+        <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <article class="group overflow-hidden border border-[#064E38]/10 bg-[#FFF9ED]" data-reveal="">
+            <div class="h-56 overflow-hidden bg-[#D6A14B]/15">
+              <img src="media/photo-1493106641515-6b5631de4bb9.jpg" alt="Travail artisanal, des objets façonnés à la main" width="650" height="550" loading="lazy" class="h-full w-full object-cover transition-transform duration-500 motion-safe:group-hover:scale-105">
+            </div>
+            <div class="p-6">
+              <p class="mb-3 text-xs tracking-widest text-[#B51F25]">01 / LE SAVOIR-FAIRE</p>
+              <h3 class="text-2xl tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Artisans et créateurs</h3>
+              <p class="mt-3 text-sm leading-6 text-[#25251F]/65">Des créations originales, des objets faits avec passion et de belles idées cadeaux pour faire plaisir à vos proches.</p>
+            </div>
+          </article>
+          <article class="group overflow-hidden border border-[#064E38]/10 bg-[#FFF9ED]" data-reveal="">
+            <div class="h-56 overflow-hidden bg-[#D6A14B]/15">
+              <img src="media/photo-1482517967863-00e15c9b44be.jpg" alt="Décorations festives dans l’esprit d’un Noël traditionnel" width="650" height="550" loading="lazy" class="h-full w-full object-cover transition-transform duration-500 motion-safe:group-hover:scale-105">
+            </div>
+            <div class="p-6">
+              <p class="mb-3 text-xs tracking-widest text-[#B51F25]">02 / TOUT PRÈS D’ICI</p>
+              <h3 class="text-2xl tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Commerçants locaux</h3>
+              <p class="mt-3 text-sm leading-6 text-[#25251F]/65">Découvrez des produits et des savoir-faire de proximité dans l’esprit authentique des fêtes de Noël.</p>
+            </div>
+          </article>
+          <article class="group overflow-hidden border border-[#064E38]/10 bg-[#FFF9ED]" data-reveal="">
+            <div class="h-56 overflow-hidden bg-[#D6A14B]/15">
+              <img src="media/photo-1513201099705-a9746e1e201f.jpg" alt="Cadeaux de Noël soigneusement emballés" width="650" height="550" loading="lazy" class="h-full w-full object-cover transition-transform duration-500 motion-safe:group-hover:scale-105">
+            </div>
+            <div class="p-6">
+              <p class="mb-3 text-xs tracking-widest text-[#B51F25]">03 / POUR FAIRE PLAISIR</p>
+              <h3 class="text-2xl tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Idées cadeaux</h3>
+              <p class="mt-3 text-sm leading-6 text-[#25251F]/65">Des trouvailles uniques pour préparer les fêtes et glisser un peu de magie sous le sapin.</p>
+            </div>
+          </article>
+          <article class="group overflow-hidden border border-[#064E38]/10 bg-[#FFF9ED]" data-reveal="">
+            <div class="h-56 overflow-hidden bg-[#D6A14B]/15">
+              <img src="media/photo-1481391319762-47dff72954d9.jpg" alt="Douceurs gourmandes à savourer pendant les fêtes" width="650" height="550" loading="lazy" class="h-full w-full object-cover transition-transform duration-500 motion-safe:group-hover:scale-105">
+            </div>
+            <div class="p-6">
+              <p class="mb-3 text-xs tracking-widest text-[#B51F25]">04 / JUSTE UNE DOUCEUR</p>
+              <h3 class="text-2xl tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Gourmandises</h3>
+              <p class="mt-3 text-sm leading-6 text-[#25251F]/65">Des saveurs de saison, des douceurs et des plaisirs gourmands pour se régaler tout au long de la journée.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Animations -->
+    <section id="animations" class="relative scroll-mt-28 overflow-hidden bg-[#064E38] px-5 py-20 text-[#FFF9ED] md:px-10 lg:px-14 lg:py-24">
+      <span class="pointer-events-none absolute -right-3 top-8 text-9xl text-[#D6A14B]/15" aria-hidden="true">✧</span>
+      <div class="mx-auto max-w-7xl">
+        <div class="mx-auto mb-12 max-w-2xl text-center" data-reveal="">
+          <p class="mb-4 text-xs font-medium uppercase tracking-[0.2em] text-[#D6A14B]">Au programme : des étoiles dans les yeux</p>
+          <h2 class="text-4xl leading-[1.1] tracking-tight sm:text-5xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Une journée pleine de magie<br>et de <span class="text-[#E8C386] italic">surprises</span></h2>
+          <p class="mt-5 text-sm leading-6 text-[#FFF9ED]/70">Petits et grands, préparez-vous à vivre une journée inoubliable !</p>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <article class="group border border-[#FFF9ED]/15 bg-white/[0.03] p-6 transition-colors hover:bg-white/[0.07]" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:camera-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl leading-tight tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Le Père Noël<br>et son photographe</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Venez rencontrer le Père Noël, partager un sourire et immortaliser un joli souvenir de Noël.</p>
+          </article>
+          <article class="border border-[#FFF9ED]/15 bg-white/[0.03] p-6 transition-colors hover:bg-white/[0.07]" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:microphone-3-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">La chorale de Noël</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Retrouvez la magie des fêtes à travers des chants et des mélodies qui réchauffent les cœurs.</p>
+          </article>
+          <article class="border border-[#FFF9ED]/15 bg-white/[0.03] p-6 transition-colors hover:bg-white/[0.07]" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:music-notes-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Concerts et musique</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Laissez-vous porter par l’ambiance musicale et festive du village.</p>
+          </article>
+          <article class="border border-[#FFF9ED]/15 bg-white/[0.03] p-6 transition-colors hover:bg-white/[0.07]" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:magic-stick-3-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Spectacle surprise</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Une animation mystérieuse préparée par les lutins des Aiguerelles !</p>
+          </article>
+          <article class="relative border border-[#D6A14B]/50 bg-[#D6A14B]/[0.06] p-6 transition-colors hover:bg-[#D6A14B]/10" data-reveal="">
+            <span class="absolute right-4 top-5 rounded-full bg-[#E8C386] px-2.5 py-1 text-xs font-medium text-[#064E38]">Gratuit</span>
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:route-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Promenades en calèche</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Profitez de promenades gratuites en calèche pour petits et grands.</p>
+          </article>
+          <article class="border border-[#FFF9ED]/15 bg-white/[0.03] p-6 transition-colors hover:bg-white/[0.07]" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:gift-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Tombola de Noël</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Participez au tirage de la tombola et tentez de repartir avec une belle surprise.</p>
+          </article>
+          <article class="border border-[#FFF9ED]/15 bg-white/[0.03] p-6 transition-colors hover:bg-white/[0.07]" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:balloon-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Espace enfants</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Un espace dédié aux plus jeunes avec atelier de maquillage, pêche aux canards, pêche aux lutins et attraction gonflable.</p>
+          </article>
+          <article class="border border-[#FFF9ED]/15 bg-[#B51F25]/20 p-6 transition-colors hover:bg-[#B51F25]/30" data-reveal="">
+            <div class="mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#D6A14B]/10 text-[#E8C386]">
+              <iconify-icon icon="solar:t-shirt-linear" width="27" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="text-2xl tracking-tight" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Pulls moches de Noël</h3>
+            <p class="mt-3 text-sm leading-6 text-[#FFF9ED]/65">Sortez vos plus beaux pulls moches de Noël et venez partager votre bonne humeur !</p>
+            <p class="mt-4 text-xs italic text-[#E8C386]">Plus il pique les yeux, plus on aime.</p>
+          </article>
+        </div>
+        <p class="mt-8 flex items-start justify-center gap-2 text-center text-xs leading-5 text-[#FFF9ED]/60">
+          <iconify-icon icon="solar:info-circle-linear" width="16" class="mt-0.5 shrink-0" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+          La programmation détaillée et les modalités des animations seront communiquées ultérieurement.
+        </p>
+      </div>
+    </section>
+
+    <!-- Restauration -->
+    <section class="px-5 py-20 md:px-10 lg:px-14 lg:py-28">
+      <div class="mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-2 lg:gap-20">
+        <div data-reveal="">
+          <p class="mb-4 text-xs font-medium uppercase tracking-[0.2em] text-[#B51F25]">Le cœur au chaud, le ventre plein</p>
+          <h2 class="text-4xl leading-[1.1] tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Une pause gourmande<br>au cœur de la fête</h2>
+          <p class="mt-6 text-sm leading-7 text-[#25251F]/70">Parce que la magie de Noël passe aussi par les plaisirs de la table, profitez d’un espace de restauration pour faire une pause, vous réchauffer et partager un bon moment.</p>
+          <div class="mt-7 grid grid-cols-2 gap-x-5 gap-y-5 text-sm text-[#064E38]">
+            <div class="flex items-center gap-3"><iconify-icon icon="solar:delivery-linear" width="23" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>Food-trucks</div>
+            <div class="flex items-center gap-3"><iconify-icon icon="solar:chef-hat-linear" width="23" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>Plats à déguster</div>
+            <div class="flex items-center gap-3"><iconify-icon icon="solar:cup-hot-linear" width="23" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>Boissons chaudes</div>
+            <div class="flex items-center gap-3"><iconify-icon icon="solar:wineglass-linear" width="23" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>Vin chaud</div>
+            <div class="flex items-center gap-3"><iconify-icon icon="solar:donut-linear" width="23" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>Gourmandises sucrées</div>
+            <div class="flex items-center gap-3"><iconify-icon icon="solar:shop-linear" width="23" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>Buvette et snacking</div>
+          </div>
+          <div class="mt-8 border-l-2 border-[#D6A14B] bg-[#F8E8C5]/40 px-5 py-4">
+            <p class="text-xl italic text-[#064E38]" style="font-family:'Cormorant Garamond',serif;">Des gâteaux faits main, faits avec le cœur.</p>
+            <p class="mt-2 text-xs leading-5 text-[#25251F]/60">Un espace restauration dédié pour se poser. Et une bonne excuse pour reprendre une petite douceur.</p>
+          </div>
+          <p class="mt-4 text-xs text-[#25251F]/50">L’abus d’alcool est dangereux pour la santé. À consommer avec modération.</p>
+        </div>
+        <div class="relative grid grid-cols-2 gap-4 pb-8" data-reveal="">
+          <img src="media/photo-1517578239113-b03992dcdd25.jpg" alt="Une boisson chaude pour une pause réconfortante" width="700" height="950" loading="lazy" class="mt-12 h-72 w-full rounded-t-full bg-[#F8E8C5] object-cover sm:h-96">
+          <img src="media/photo-1481391319762-47dff72954d9.jpg" alt="Gourmandises chocolatées pour le plaisir des petits et des grands" width="700" height="950" loading="lazy" class="h-72 w-full rounded-b-full bg-[#F8E8C5] object-cover sm:h-96">
+          <div class="absolute bottom-0 left-1/2 flex h-28 w-28 -translate-x-1/2 rotate-6 flex-col items-center justify-center rounded-full border-4 border-[#FFF9ED] bg-[#B51F25] text-[#FFF9ED]">
+            <iconify-icon icon="solar:heart-linear" width="23" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            <span class="mt-1 text-center text-lg italic leading-5" style="font-family:'Cormorant Garamond',serif;">Zéro régime.<br>100 % Noël.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Solidarité -->
+    <section class="bg-[#F8E8C5]/45 px-5 py-20 md:px-10 lg:px-14 lg:py-24">
+      <div class="mx-auto max-w-7xl">
+        <div class="grid items-center gap-12 lg:grid-cols-[1fr_1.05fr] lg:gap-16">
+          <div class="relative" data-reveal="">
+            <img src="media/photo-1511632765486-a01980e01a18.jpg" alt="Le bonheur de se retrouver en famille, toutes générations réunies" width="1100" height="1200" loading="lazy" class="aspect-[4/4.3] w-full rounded-t-[45%] bg-[#E8DDC6] object-cover">
+            <div class="absolute -bottom-5 left-5 right-5 -rotate-2 bg-[#FFF9ED] px-5 py-5 text-center shadow-sm">
+              <p class="text-3xl tracking-tight text-[#B51F25]" style="font-family:'Great Vibes',cursive;">Des sourires qui n’ont pas d’âge.</p>
+            </div>
+          </div>
+          <div class="pt-5 lg:pt-0" data-reveal="">
+            <p class="mb-4 text-xs font-medium uppercase tracking-[0.2em] text-[#B51F25]">C’est cela, l’esprit des Aiguerelles</p>
+            <h2 class="text-4xl leading-[1.1] tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Plus qu’un marché,<br>un moment de partage</h2>
+            <div class="mt-6 space-y-4 text-sm leading-7 text-[#25251F]/70">
+              <p>Ce qui rend le Village de Noël des Aiguerelles si particulier, c’est avant tout l’esprit qui l’anime.</p>
+              <p>Pendant une journée, le Parc des Aiguerelles devient un véritable village du Père Noël. Les enfants découvrent la magie des fêtes, les familles se retrouvent, les visiteurs flânent entre les stands et les artisans partagent leur passion.</p>
+              <p>Nos résidents profitent eux aussi de cette joyeuse effervescence, des rencontres, des sourires et de cette ambiance que nous aimons tant.</p>
+              <p>Professionnels, bénévoles, familles et visiteurs contribuent ensemble à faire de cet événement un moment chaleureux, festif et intergénérationnel.</p>
+            </div>
+            <p class="mt-5 text-2xl italic leading-tight tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;">Ensemble, faisons de ce marché un moment solidaire et festif !</p>
+            <div class="mt-7 flex flex-wrap gap-2">
+              <span class="rounded-full border border-[#064E38]/20 px-3.5 py-2 text-xs text-[#064E38]">Partage</span>
+              <span class="rounded-full border border-[#064E38]/20 px-3.5 py-2 text-xs text-[#064E38]">Proximité</span>
+              <span class="rounded-full border border-[#B51F25]/20 px-3.5 py-2 text-xs text-[#B51F25]">Solidarité</span>
+              <span class="rounded-full border border-[#B51F25]/20 px-3.5 py-2 text-xs text-[#B51F25]">Sourires</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Informations pratiques -->
+    <section id="infos-pratiques" class="scroll-mt-28 px-5 py-20 md:px-10 lg:px-14 lg:py-28">
+      <div class="mx-auto max-w-7xl">
+        <div class="mb-12 text-center" data-reveal="">
+          <p class="mb-4 text-xs font-medium uppercase tracking-[0.2em] text-[#B51F25]">Le plus difficile ? Choisir son pull.</p>
+          <h2 class="text-4xl tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Préparez votre visite</h2>
+          <p class="mt-4 text-sm text-[#25251F]/65">Tout ce qu’il faut savoir pour venir le cœur léger.</p>
+        </div>
+        <div class="grid gap-8 lg:grid-cols-[1fr_1fr] lg:gap-12">
+          <div class="grid content-start gap-x-7 sm:grid-cols-2" data-reveal="">
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:calendar-date-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Date</h3><p class="mt-2 text-sm font-medium text-[#064E38]">Samedi 12 décembre 2026</p></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:clock-circle-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Horaires</h3><p class="mt-2 text-sm font-medium text-[#064E38]">De 9 h 30 à 17 h 30</p></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:map-point-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Adresse</h3><address class="mt-2 text-sm not-italic leading-6 text-[#064E38]">Les Aiguerelles<br>43 rue Léon Blum<br>Mauguio (34), France</address></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:ticket-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Entrée</h3><p class="mt-2 text-sm leading-6 text-[#064E38]">Gratuite et ouverte à tous<br>Animaux acceptés</p></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:home-2-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Environnement</h3><p class="mt-2 text-sm text-[#064E38]">En intérieur et en extérieur</p></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:cup-hot-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Sur place</h3><p class="mt-2 text-sm leading-6 text-[#064E38]">Restauration, buvette,<br>snacking et toilettes</p></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:parking-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Stationnement</h3><p class="mt-2 text-sm text-[#064E38]">Parking disponible</p></div>
+            </div>
+            <div class="flex gap-4 border-b border-[#064E38]/10 py-5">
+              <iconify-icon icon="solar:accessibility-linear" width="24" stroke-width="1.5" class="shrink-0 text-[#B51F25]" aria-hidden="true"></iconify-icon>
+              <div><h3 class="text-xs uppercase tracking-widest text-[#25251F]/50">Accessibilité</h3><p class="mt-2 text-sm leading-6 text-[#064E38]">Accès aux personnes<br>à mobilité réduite</p></div>
+            </div>
+          </div>
+          <div class="flex flex-col overflow-hidden border border-[#064E38]/15 bg-[#F8E8C5]/35" data-reveal="">
+            <div class="relative min-h-[320px] flex-1 bg-[#E9E8D9]">
+              <iframe title="Localisation des Aiguerelles, 43 rue Léon Blum à Mauguio" src="https://maps.google.com/maps?q=43%20rue%20L%C3%A9on%20Blum%2C%20Mauguio%2C%20France&t=&z=15&ie=UTF8&iwloc=&output=embed" width="600" height="400" loading="lazy" referrerpolicy="no-referrer-when-downgrade" class="absolute inset-0 h-full w-full border-0" allowfullscreen="">
+              </iframe>
+            </div>
+            <div class="flex flex-col justify-between gap-4 p-6 sm:flex-row sm:items-center">
+              <div>
+                <p class="text-2xl tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">On se retrouve ici.</p>
+                <p class="mt-1 text-xs text-[#25251F]/65">43 rue Léon Blum · Mauguio (34)</p>
+              </div>
+              <a href="https://www.google.com/maps/dir/?api=1&destination=43%20rue%20L%C3%A9on%20Blum%2C%20Mauguio%2C%20France" target="_blank" rel="noopener noreferrer" class="inline-flex shrink-0 items-center justify-center gap-2 rounded-sm bg-[#064E38] px-4 py-3.5 text-xs font-medium text-white transition-colors hover:bg-[#043D2C]">
+                Ouvrir l’itinéraire
+                <iconify-icon icon="solar:arrow-right-up-linear" width="18" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+                <span class="sr-only">(nouvel onglet)</span>
+              </a>
+            </div>
+          </div>
+        </div>
+        <div id="contact" class="mt-10 flex scroll-mt-28 flex-col items-center justify-between gap-5 border border-[#064E38]/15 px-6 py-6 sm:flex-row sm:px-8" data-reveal="">
+          <div class="flex items-center gap-4">
+            <iconify-icon icon="solar:chat-round-dots-linear" width="30" stroke-width="1.5" class="text-[#B51F25]" aria-hidden="true"></iconify-icon>
+            <div><h3 class="text-lg text-[#064E38]" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Une question avant de venir ?</h3><p class="mt-1 text-xs text-[#25251F]/65">L’équipe des Aiguerelles est à votre écoute.</p></div>
+          </div>
+          <a href="tel:+33683047311" class="inline-flex items-center gap-3 text-lg font-medium tracking-tight text-[#064E38] transition-colors hover:text-[#B51F25]">
+            <iconify-icon icon="solar:phone-calling-linear" width="21" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+            06 83 04 73 11
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Compte à rebours -->
+    <section class="border-y border-[#D6A14B]/30 bg-[#F8E8C5]/50 px-5 py-14 md:px-10">
+      <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-8 lg:flex-row">
+        <div class="text-center lg:text-left" data-reveal="">
+          <p class="mb-2 text-xs uppercase tracking-[0.18em] text-[#B51F25]">Les lutins s’activent…</p>
+          <h2 class="text-3xl tracking-tight text-[#064E38] sm:text-4xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">La magie approche à grands pas.</h2>
+          <p class="mt-2 text-xs text-[#25251F]/60">Rendez-vous samedi 12 décembre 2026 à 9 h 30.</p>
+        </div>
+        <div id="countdown" role="timer" aria-label="Temps restant avant l’ouverture du marché" class="grid w-full max-w-md grid-cols-4 gap-3 text-center">
+          <div class="border border-[#D6A14B]/35 bg-[#FFF9ED]/70 px-2 py-4">
+            <span id="days" class="block text-4xl tabular-nums tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;">—</span>
+            <span class="mt-1 block text-xs text-[#25251F]/60">Jours</span>
+          </div>
+          <div class="border border-[#D6A14B]/35 bg-[#FFF9ED]/70 px-2 py-4">
+            <span id="hours" class="block text-4xl tabular-nums tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;">—</span>
+            <span class="mt-1 block text-xs text-[#25251F]/60">Heures</span>
+          </div>
+          <div class="border border-[#D6A14B]/35 bg-[#FFF9ED]/70 px-2 py-4">
+            <span id="minutes" class="block text-4xl tabular-nums tracking-tight text-[#064E38] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;">—</span>
+            <span class="mt-1 block text-xs text-[#25251F]/60">Minutes</span>
+          </div>
+          <div class="border border-[#D6A14B]/35 bg-[#FFF9ED]/70 px-2 py-4">
+            <span id="seconds" class="block text-4xl tabular-nums tracking-tight text-[#B51F25] sm:text-5xl" style="font-family:'Cormorant Garamond',serif;">—</span>
+            <span class="mt-1 block text-xs text-[#25251F]/60">Secondes</span>
+          </div>
+        </div>
+        <p id="countdown-message" class="hidden max-w-md text-center text-3xl tracking-tight text-[#064E38]" role="status" style="font-family:'Cormorant Garamond',serif;">Merci d’avoir partagé la magie de Noël avec nous !</p>
+      </div>
+      <noscript><p class="mt-5 text-center text-sm text-[#064E38]">Le marché vous accueille samedi 12 décembre 2026, de 9 h 30 à 17 h 30.</p></noscript>
+    </section>
+
+    <!-- Invitation finale -->
+    <section class="relative isolate overflow-hidden bg-[#064E38] px-5 py-20 text-center text-[#FFF9ED] md:px-10 lg:py-28">
+      <img src="media/photo-1513297887119-d46091b24bfa.jpg" alt="" width="1920" height="1000" loading="lazy" class="absolute inset-0 -z-20 h-full w-full object-cover object-center">
+      <div class="absolute inset-0 -z-10 bg-[#032D21]/85"></div>
+      <div class="pointer-events-none absolute left-[8%] top-16 text-4xl text-[#D6A14B]/65" aria-hidden="true">✧</div>
+      <div class="pointer-events-none absolute bottom-24 right-[10%] text-6xl text-[#D6A14B]/55" aria-hidden="true">✦</div>
+      <div class="mx-auto max-w-3xl" data-reveal="">
+        <p class="mb-5 text-xs uppercase tracking-[0.2em] text-[#E8C386]">Gardez la date. Invitez ceux que vous aimez.</p>
+        <h2 class="text-4xl leading-[1.1] tracking-tight sm:text-5xl lg:text-6xl" style="font-family:'Cormorant Garamond',serif;font-weight:500;">Et si nous partagions ensemble<br><span class="text-[#E8C386]" style="font-family:'Great Vibes',cursive;font-weight:400;">la magie de Noël ?</span></h2>
+        <p class="mx-auto mt-6 max-w-xl text-sm leading-7 text-[#FFF9ED]/75">Des rencontres, des sourires, des cadeaux, des gourmandises et des souvenirs à créer en famille… Nous vous attendons aux Aiguerelles pour une journée qui fait du bien au cœur.</p>
+        <div class="mt-8 space-y-2">
+          <p class="text-xl font-medium tracking-tight sm:text-2xl">SAMEDI 12 DÉCEMBRE 2026</p>
+          <p class="text-sm tracking-wide">DE 9 H 30 À 17 H 30 <span class="mx-2 text-[#D6A14B]" aria-hidden="true">✦</span> ENTRÉE GRATUITE</p>
+        </div>
+        <div class="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+          <a href="#infos-pratiques" class="inline-flex items-center justify-center gap-4 rounded-sm bg-[#B51F25] px-7 py-4 text-sm font-medium text-white transition-colors hover:bg-[#94191E]">
+            Préparer ma visite
+            <iconify-icon icon="solar:arrow-right-linear" width="19" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+          </a>
+          <a href="#infos-pratiques" class="inline-flex items-center justify-center rounded-sm border border-[#FFF9ED]/40 px-6 py-4 text-sm transition-colors hover:bg-white/10">Voir les informations pratiques</a>
+        </div>
+        <p class="mt-7 text-xs text-[#FFF9ED]/60">Psst… le pull moche est vivement recommandé. Le sourire aussi.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="bg-[#FFF9ED] px-5 pt-14 md:px-10 lg:px-14">
+    <div class="mx-auto max-w-7xl">
+      <div class="grid gap-9 pb-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_0.8fr]">
+        <div>
+          <a href="#accueil" class="text-3xl font-medium tracking-tight text-[#064E38]" style="font-family:'Cormorant Garamond',serif;">Les Aiguerelles<span class="text-[#B51F25]">.</span></a>
+          <p class="mt-2 text-xs uppercase tracking-[0.12em] text-[#25251F]/60">Village de Noël · Mauguio</p>
+          <p class="mt-5 max-w-xs text-xs leading-6 text-[#25251F]/60">Un événement organisé avec cœur par l’équipe des Aiguerelles — Croix-Rouge française.</p>
+        </div>
+        <div>
+          <h2 class="mb-4 text-xs font-medium uppercase tracking-widest text-[#064E38]">Notre rendez-vous</h2>
+          <p class="text-sm leading-7 text-[#25251F]/65">Samedi 12 décembre 2026<br>De 9 h 30 à 17 h 30<br>Entrée gratuite</p>
+        </div>
+        <div>
+          <h2 class="mb-4 text-xs font-medium uppercase tracking-widest text-[#064E38]">Le village vous attend</h2>
+          <address class="text-sm not-italic leading-7 text-[#25251F]/65">Les Aiguerelles<br>43 rue Léon Blum<br>Mauguio (34), France</address>
+        </div>
+        <div>
+          <h2 class="mb-4 text-xs font-medium uppercase tracking-widest text-[#064E38]">Restons proches</h2>
+          <a href="#infos-pratiques" class="block text-sm leading-7 text-[#25251F]/65 hover:text-[#B51F25]">Informations pratiques</a>
+          <a href="tel:+33683047311" class="mt-2 block text-sm leading-7 text-[#25251F]/65 hover:text-[#B51F25]">06 83 04 73 11</a>
+          <a href="#contact" class="mt-2 inline-flex items-center gap-2 text-xs text-[#B51F25]">Nous contacter <iconify-icon icon="solar:arrow-right-linear" width="15" stroke-width="1.5" aria-hidden="true"></iconify-icon></a>
+        </div>
+      </div>
+      <div class="flex flex-col items-center justify-between gap-4 border-t border-[#064E38]/15 py-6 sm:flex-row">
+        <p class="text-xs text-[#25251F]/45">Les Aiguerelles · Marché de Noël 2026</p>
+        <p class="text-center text-lg italic text-[#064E38]" style="font-family:'Cormorant Garamond',serif;">Ensemble, faisons briller la magie de Noël aux Aiguerelles.</p>
+        <a href="#accueil" class="flex h-9 w-9 items-center justify-center rounded-full border border-[#064E38]/20 text-[#064E38] transition-colors hover:bg-[#064E38]/5" aria-label="Retour en haut">
+          <iconify-icon icon="solar:arrow-up-linear" width="18" stroke-width="1.5" aria-hidden="true"></iconify-icon>
+        </a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const setScrollBehavior = () => {
+        document.documentElement.style.scrollBehavior = motionPreference.matches ? 'auto' : 'smooth';
+      };
+      setScrollBehavior();
+      motionPreference.addEventListener('change', setScrollBehavior);
+
+      // Navigation mobile : ouverture, fermeture, touche Échap et retour au bureau.
+      const menuButton = document.getElementById('menu-toggle');
+      const mobileMenu = document.getElementById('menu-mobile');
+      const menuIcon = document.getElementById('menu-icon');
+
+      function setMenu(open, restoreFocus = false) {
+        mobileMenu.classList.toggle('hidden', !open);
+        menuButton.setAttribute('aria-expanded', String(open));
+        menuButton.setAttribute('aria-label', open ? 'Fermer le menu' : 'Ouvrir le menu');
+        menuIcon.setAttribute('icon', open ? 'solar:close-circle-linear' : 'solar:hamburger-menu-linear');
+        if (restoreFocus) menuButton.focus();
+      }
+
+      menuButton.addEventListener('click', () => {
+        setMenu(menuButton.getAttribute('aria-expanded') !== 'true');
+      });
+      mobileMenu.querySelectorAll('a').forEach(link => {
+        link.addEventListener('click', () => setMenu(false));
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && menuButton.getAttribute('aria-expanded') === 'true') {
+          setMenu(false, true);
+        }
+      });
+      document.addEventListener('click', event => {
+        if (!event.target.closest('header')) setMenu(false);
+      });
+      window.matchMedia('(min-width: 1280px)').addEventListener('change', event => {
+        if (event.matches) setMenu(false);
+      });
+
+      // Le décalage +01:00 correspond au fuseau Europe/Paris à cette date.
+      const eventStart = Date.parse('2026-12-12T09:30:00+01:00');
+      const countdown = document.getElementById('countdown');
+      const message = document.getElementById('countdown-message');
+      const counters = ['days', 'hours', 'minutes', 'seconds'].map(id => document.getElementById(id));
+      let countdownInterval;
+
+      function updateCountdown() {
+        const remaining = eventStart - Date.now();
+        if (remaining <= 0) {
+          countdown.classList.add('hidden');
+          message.classList.remove('hidden');
+          if (countdownInterval) clearInterval(countdownInterval);
+          return false;
+        }
+        const seconds = Math.floor(remaining / 1000);
+        const values = [
+          Math.floor(seconds / 86400),
+          Math.floor((seconds % 86400) / 3600),
+          Math.floor((seconds % 3600) / 60),
+          seconds % 60
+        ];
+        counters.forEach((counter, index) => {
+          counter.textContent = String(values[index]).padStart(2, '0');
+        });
+        return true;
+      }
+      if (updateCountdown()) countdownInterval = setInterval(updateCountdown, 1000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) updateCountdown();
+      });
+
+      // Apparitions discrètes : le contenu reste accessible sans script.
+      if ('IntersectionObserver' in window && !motionPreference.matches) {
+        const observer = new IntersectionObserver(entries => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) {
+              entry.target.style.opacity = '1';
+              entry.target.style.transform = 'translateY(0)';
+              observer.unobserve(entry.target);
+            }
+          });
+        }, { threshold: 0.08 });
+
+        const revealElements = document.querySelectorAll('[data-reveal]');
+        revealElements.forEach(element => {
+          if (element.getBoundingClientRect().top > window.innerHeight) {
+            element.style.opacity = '0';
+            element.style.transform = 'translateY(16px)';
+            element.style.transition = 'opacity 600ms ease, transform 600ms ease';
+            observer.observe(element);
+          }
+        });
+
+        motionPreference.addEventListener('change', event => {
+          if (event.matches) {
+            observer.disconnect();
+            revealElements.forEach(element => {
+              element.style.transition = 'none';
+              element.style.opacity = '1';
+              element.style.transform = 'none';
+            });
+          }
+        });
+      }
+
+      // En cas d’image indisponible, conserver une composition propre et lisible.
+      document.querySelectorAll('img').forEach(image => {
+        image.addEventListener('error', () => {
+          image.style.opacity = '0';
+        }, { once: true });
+      });
+    })();
+  </script>
+  <!-- À très bientôt aux Aiguerelles, pour faire briller Noël ensemble. -->
+
+</body></html>

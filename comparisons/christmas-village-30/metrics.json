@@ -1,0 +1,33 @@
+{
+ "slug": "christmas-village-30",
+ "overall": 0.748,
+ "structure": 1.0,
+ "copy": 0.999,
+ "design": 0.454,
+ "motion": 0.071,
+ "media": 1.0,
+ "pixel": 0.795,
+ "text_similarity": 0.999,
+ "sections": [
+  10,
+  10
+ ],
+ "headings": [
+  37,
+  37
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  10,
+  10
+ ],
+ "heights": [
+  7490,
+  7490
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}

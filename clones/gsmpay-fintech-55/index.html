@@ -1,0 +1,1202 @@
+<html lang="en"><head>
+<script id="aura-supabase-token-firewall">(function () {
+  if (window.__AURA_SUPABASE_FIREWALL__) return;
+  window.__AURA_SUPABASE_FIREWALL__ = true;
+
+  var SUPABASE_HOST = "hoirqrkdgbmvpwutwuwj.supabase.co";
+  var BLOCKED_KEY_PATTERNS = [
+    /^sb-[a-z0-9-]+-auth-token$/i,
+    /^supabase\.auth\.token$/i
+  ];
+
+  function isBlockedStorageKey(key) {
+    if (typeof key !== "string") return false;
+    for (var i = 0; i < BLOCKED_KEY_PATTERNS.length; i++) {
+      if (BLOCKED_KEY_PATTERNS[i].test(key)) return true;
+    }
+    return false;
+  }
+
+  function toAbsoluteUrl(input) {
+    try {
+      return new URL(input, window.location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function isSupabaseDestination(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    if (SUPABASE_HOST && parsed.host === SUPABASE_HOST) return true;
+    return parsed.host.endsWith(".supabase.co");
+  }
+
+  function pathLooksSensitive(input) {
+    var parsed = toAbsoluteUrl(input);
+    if (!parsed) return false;
+    return /^\/(auth|rest|functions)\/v1\//.test(parsed.pathname || "");
+  }
+
+  function headersContainAuth(headersLike) {
+    if (!headersLike) return false;
+
+    try {
+      if (typeof Headers !== "undefined" && headersLike instanceof Headers) {
+        return !!(headersLike.get("authorization") || headersLike.get("apikey"));
+      }
+    } catch {}
+
+    if (Array.isArray(headersLike)) {
+      for (var i = 0; i < headersLike.length; i++) {
+        var pair = headersLike[i] || [];
+        var name = String(pair[0] || "").toLowerCase();
+        if (name === "authorization" || name === "apikey") return true;
+      }
+      return false;
+    }
+
+    if (typeof headersLike === "object") {
+      var keys = Object.keys(headersLike);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j].toLowerCase();
+        if (k === "authorization" || k === "apikey") return true;
+      }
+    }
+    return false;
+  }
+
+  function requestLooksSensitive(input, init, extraHeaders) {
+    var url = "";
+    try {
+      if (typeof input === "string") {
+        url = input;
+      } else if (input && typeof input.url === "string") {
+        url = input.url;
+      }
+    } catch {}
+
+    var headers =
+      (init && init.headers) ||
+      (input && input.headers) ||
+      extraHeaders ||
+      null;
+    var hasAuthHeaders = headersContainAuth(headers);
+    if (hasAuthHeaders) return true;
+
+    if (!url) return false;
+    if (isSupabaseDestination(url) && pathLooksSensitive(url)) return true;
+    return false;
+  }
+
+  function patchStorage(storage, storageName) {
+    if (!storage) return;
+    var proto = Object.getPrototypeOf(storage);
+    if (!proto || proto.__auraSupabaseFirewallPatched) return;
+
+    var rawGetItem = proto.getItem;
+    var rawSetItem = proto.setItem;
+    var rawRemoveItem = proto.removeItem;
+    var rawClear = proto.clear;
+    var rawKey = proto.key;
+    var rawLengthDescriptor = Object.getOwnPropertyDescriptor(proto, "length");
+    var rawLengthGet = rawLengthDescriptor && rawLengthDescriptor.get;
+
+    function getRawLength(instance) {
+      try {
+        if (rawLengthGet) return Number(rawLengthGet.call(instance) || 0);
+      } catch {}
+      try {
+        return Number(instance.length || 0);
+      } catch {}
+      return 0;
+    }
+
+    function getVisibleKeys(instance) {
+      var visible = [];
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var currentKey = rawKey.call(instance, i);
+        if (currentKey && !isBlockedStorageKey(currentKey)) {
+          visible.push(currentKey);
+        }
+      }
+      return visible;
+    }
+
+    function maskBlockedKeyProperty(instance, keyName) {
+      if (!keyName || !isBlockedStorageKey(keyName)) return;
+      try {
+        Object.defineProperty(instance, keyName, {
+          configurable: true,
+          enumerable: false,
+          get: function () {
+            return null;
+          },
+          set: function () {
+            return true;
+          }
+        });
+      } catch {}
+    }
+
+    function syncBlockedKeyProperties(instance) {
+      var total = getRawLength(instance);
+      for (var i = 0; i < total; i++) {
+        var k = rawKey.call(instance, i);
+        if (k) maskBlockedKeyProperty(instance, k);
+      }
+    }
+
+    proto.getItem = function (key) {
+      syncBlockedKeyProperties(this);
+      if (isBlockedStorageKey(String(key))) return null;
+      return rawGetItem.call(this, key);
+    };
+
+    proto.setItem = function (key, value) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawSetItem.call(this, key, value);
+    };
+
+    proto.removeItem = function (key) {
+      if (isBlockedStorageKey(String(key))) return;
+      return rawRemoveItem.call(this, key);
+    };
+
+    proto.clear = function () {
+      if (typeof rawClear !== "function") return;
+
+      // Preserve blocked keys across clear() to prevent auth token/session wipe.
+      var preservedBlockedEntries = [];
+      var total = getRawLength(this);
+      for (var i = 0; i < total; i++) {
+        var blockedKey = rawKey.call(this, i);
+        if (blockedKey && isBlockedStorageKey(blockedKey)) {
+          preservedBlockedEntries.push([
+            blockedKey,
+            rawGetItem.call(this, blockedKey),
+          ]);
+        }
+      }
+
+      rawClear.call(this);
+
+      for (var j = 0; j < preservedBlockedEntries.length; j++) {
+        var entry = preservedBlockedEntries[j];
+        var key = entry[0];
+        var value = entry[1];
+        if (typeof key === "string" && typeof value === "string") {
+          rawSetItem.call(this, key, value);
+        }
+      }
+
+      syncBlockedKeyProperties(this);
+    };
+
+    proto.key = function (index) {
+      syncBlockedKeyProperties(this);
+      var visible = getVisibleKeys(this);
+      return visible[index] || null;
+    };
+
+    try {
+      Object.defineProperty(proto, "length", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          syncBlockedKeyProperties(this);
+          return getVisibleKeys(this).length;
+        }
+      });
+    } catch {}
+
+    var proxyStorage = null;
+    try {
+      proxyStorage = new Proxy(storage, {
+        get: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return null;
+          if (prop === "length") return getVisibleKeys(target).length;
+          if (prop === "key") {
+            return function (index) {
+              var visible = getVisibleKeys(target);
+              return visible[index] || null;
+            };
+          }
+          if (prop === "clear") {
+            return function () {
+              if (typeof rawClear !== "function") return;
+
+              var preservedBlockedEntries = [];
+              var total = getRawLength(target);
+              for (var i = 0; i < total; i++) {
+                var blockedKey = rawKey.call(target, i);
+                if (blockedKey && isBlockedStorageKey(blockedKey)) {
+                  preservedBlockedEntries.push([
+                    blockedKey,
+                    rawGetItem.call(target, blockedKey),
+                  ]);
+                }
+              }
+
+              rawClear.call(target);
+
+              for (var j = 0; j < preservedBlockedEntries.length; j++) {
+                var entry = preservedBlockedEntries[j];
+                var key = entry[0];
+                var value = entry[1];
+                if (typeof key === "string" && typeof value === "string") {
+                  rawSetItem.call(target, key, value);
+                }
+              }
+
+              syncBlockedKeyProperties(target);
+            };
+          }
+
+          var value = target[prop];
+          if (typeof value === "function") return value.bind(target);
+          return value;
+        },
+        set: function (target, prop, value) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          target[prop] = value;
+          return true;
+        },
+        has: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return false;
+          return prop in target;
+        },
+        deleteProperty: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) return true;
+          try {
+            delete target[prop];
+          } catch {}
+          return true;
+        },
+        ownKeys: function (target) {
+          return getVisibleKeys(target);
+        },
+        getOwnPropertyDescriptor: function (target, prop) {
+          if (typeof prop === "string" && isBlockedStorageKey(prop)) {
+            return undefined;
+          }
+          if (prop === "length") {
+            return {
+              configurable: true,
+              enumerable: false,
+              value: getVisibleKeys(target).length,
+              writable: false
+            };
+          }
+          return Object.getOwnPropertyDescriptor(target, prop);
+        }
+      });
+    } catch {}
+
+    try {
+      if (proxyStorage) {
+        Object.defineProperty(window, storageName, {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return proxyStorage;
+          }
+        });
+      }
+    } catch {}
+
+    syncBlockedKeyProperties(storage);
+    proto.__auraSupabaseFirewallPatched = true;
+  }
+
+  function patchCookieAccess() {
+    try {
+      var cookieDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+      if (!cookieDescriptor || !cookieDescriptor.configurable) return;
+
+      Object.defineProperty(document, "cookie", {
+        configurable: true,
+        enumerable: false,
+        get: function () {
+          return "";
+        },
+        set: function () {
+          return true;
+        }
+      });
+    } catch {}
+  }
+
+  function patchFetch() {
+    if (typeof window.fetch !== "function") return;
+    var rawFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      if (requestLooksSensitive(input, init, null)) {
+        return Promise.reject(new Error("Blocked by Aura security policy"));
+      }
+      return rawFetch(input, init);
+    };
+  }
+
+  function patchXHR() {
+    if (typeof XMLHttpRequest === "undefined") return;
+    var rawOpen = XMLHttpRequest.prototype.open;
+    var rawSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    var rawSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this.__auraRequestUrl = String(url || "");
+      this.__auraHeaders = {};
+      return rawOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__auraHeaders) this.__auraHeaders = {};
+      this.__auraHeaders[String(name || "").toLowerCase()] = String(value || "");
+      return rawSetHeader.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function () {
+      if (requestLooksSensitive(this.__auraRequestUrl || "", null, this.__auraHeaders || null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return rawSend.apply(this, arguments);
+    };
+  }
+
+  function patchBeacon() {
+    if (typeof navigator.sendBeacon !== "function") return;
+    var rawBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      if (requestLooksSensitive(url, null, null)) return false;
+      return rawBeacon(url, data);
+    };
+  }
+
+  function patchWebSocket() {
+    if (typeof WebSocket === "undefined") return;
+    var RawWebSocket = WebSocket;
+    window.WebSocket = function (url, protocols) {
+      if (requestLooksSensitive(String(url || ""), null, null)) {
+        throw new Error("Blocked by Aura security policy");
+      }
+      return new RawWebSocket(url, protocols);
+    };
+    window.WebSocket.prototype = RawWebSocket.prototype;
+  }
+
+  // Install before customer scripts; the firewall also filters the fallback.
+  (function () {
+  function isBlockedStorageKey(key) {
+    return /^sb-[a-z0-9-]+-auth-token$/i.test(key) || /^supabase\.auth\.token$/i.test(key);
+  }
+  // An opaque iframe has no browser storage origin. Give customer SDKs private
+  // storage so an unguarded getter cannot crash their UI. Published pages seed
+  // this from their own namespace; other previews retain document-lifetime state.
+  function installOpaqueStorageFallback(storageName) {
+    if (window.parent === window || window.origin !== "null") return;
+    try {
+      void window[storageName];
+      return;
+    } catch (error) {
+      if (!error || error.name !== "SecurityError") return;
+    }
+    var bridge = window.__AURA_OPAQUE_STORAGE__;
+    var entries = new Map(bridge && bridge.seed[storageName] || []);
+    function persist(operation, key, value) {
+      if (bridge) bridge.persist(storageName, operation, key, value);
+    }
+    // Each storage area has its own prototype so the token firewall can wrap it
+    // without modifying Object.prototype or the browser's native Storage class.
+    var proto = Object.create(null);
+    proto.getItem = function (key) {
+      key = String(key);
+      if (isBlockedStorageKey(key)) return null;
+      return entries.has(key) ? entries.get(key) : null;
+    };
+    proto.setItem = function (key, value) {
+      key = String(key); value = String(value);
+      if (isBlockedStorageKey(key)) return;
+      entries.set(key, value); persist("set", key, value);
+    };
+    proto.removeItem = function (key) { key = String(key); entries.delete(key); persist("remove", key); };
+    proto.clear = function () { entries.clear(); persist("clear"); };
+    proto.key = function (index) { return Array.from(entries.keys())[Number(index) >>> 0] ?? null; };
+    Object.defineProperty(proto, "length", {
+      configurable: true,
+      get: function () { return entries.size; }
+    });
+    var target = Object.create(proto);
+    var storage = new Proxy(target, {
+      get: function (object, key) {
+        if (typeof key === "string" && isBlockedStorageKey(key)) return null;
+        if (typeof key !== "string" || key in object) return Reflect.get(object, key);
+        return entries.has(key) ? entries.get(key) : undefined;
+      },
+      set: function (object, key, value) {
+        if (typeof key !== "string") return Reflect.set(object, key, value);
+        object.setItem(key, value);
+        return true;
+      },
+      deleteProperty: function (object, key) {
+        if (typeof key === "string") object.removeItem(key);
+        return true;
+      },
+      has: function (object, key) { return key in object || entries.has(key); },
+      ownKeys: function (object) { return Array.from(new Set(Reflect.ownKeys(object).concat(Array.from(entries.keys())))); },
+      getOwnPropertyDescriptor: function (object, key) {
+        return Reflect.getOwnPropertyDescriptor(object, key) || (entries.has(key)
+          ? { configurable: true, enumerable: true, writable: true, value: entries.get(key) }
+          : undefined);
+      }
+    });
+    Object.defineProperty(window, storageName, {
+      configurable: true,
+      enumerable: true,
+      get: function () { return storage; }
+    });
+  }
+
+  try { installOpaqueStorageFallback("localStorage"); } catch {}
+  try { installOpaqueStorageFallback("sessionStorage"); } catch {}
+})();
+  // Continue installing network guards if browser storage cannot be replaced.
+  try { patchStorage(window.localStorage, "localStorage"); } catch {}
+  try { patchStorage(window.sessionStorage, "sessionStorage"); } catch {}
+  patchCookieAccess();
+  patchFetch();
+  patchXHR();
+  patchBeacon();
+  patchWebSocket();
+})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="GSMpay brings payments, payouts, and financial operations together in one beautifully simple platform.">
+<title>GSMpay — Payments, without the friction.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;650&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>document.addEventListener('click', event => {
+const anchor = event.target.closest?.('a[href]');
+const href = anchor?.getAttribute('href');
+if (event.defaultPrevented || !href?.startsWith('#')) return;
+event.preventDefault();
+if (href === '#') { window.scrollTo({top: 0, behavior: 'smooth'}); return; }
+try {
+const id = decodeURIComponent(href.slice(1));
+const target = document.getElementById(id) || document.getElementsByName(id)[0];
+target?.scrollIntoView({behavior: 'smooth', block: 'start'});
+} catch { /* Invalid fragments remain in the saved document. */ }
+});</script>
+<script>document.addEventListener('click', event => {
+if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+const anchor = event.target.closest?.('a[href]');
+if (!anchor || anchor.hasAttribute('download')) return;
+const target = anchor.getAttribute('target')?.toLowerCase();
+if (target && target !== '_self' && target !== '_top') return;
+try {
+const destination = new URL(anchor.href, document.baseURI);
+const base = new URL(document.baseURI);
+if (!['http:', 'https:'].includes(destination.protocol) || destination.origin === base.origin) return;
+event.preventDefault();
+window.open(destination.href, '_blank', 'noopener,noreferrer');
+} catch { /* Leave invalid links to the browser. */ }
+}, true);</script></head>
+
+  <body class="bg-white text-black antialiased selection:bg-black selection:text-white" style="font-family: 'Inter', sans-serif;">
+    <!-- Meet a simpler way to move money. -->
+    <header class="border-b border-[#E5E5E5]">
+      <nav class="mx-auto flex h-24 max-w-7xl items-center justify-between px-6 lg:px-10" aria-label="Main navigation">
+        <a href="#" class="flex items-center gap-2.5 text-2xl font-semibold tracking-tight" aria-label="GSMpay home">
+          <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-black text-white">
+            <i data-lucide="move-up-right" class="h-6 w-6"></i>
+          </span>
+          GSMpay
+          <span class="-ml-2 text-xl font-normal">®</span>
+        </a>
+
+        <div class="hidden items-center gap-8 text-sm font-medium md:flex">
+          <a href="#platform" class="text-[#666666] transition hover:text-black">
+            Platform
+          </a>
+          <a href="#how-it-works" class="text-[#666666] transition hover:text-black">
+            How it works
+          </a>
+          <a href="#integrations" class="text-[#666666] transition hover:text-black">
+            Integrations
+          </a>
+          <a href="#pricing" class="text-[#666666] transition hover:text-black">
+            Pricing
+          </a>
+        </div>
+
+        <div class="hidden items-center gap-6 md:flex">
+          <a href="#contact" class="text-sm font-medium">Contact sales</a>
+          <a href="#get-started" class="flex items-center gap-3 rounded-lg bg-black px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800">
+            Get started
+            <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+          </a>
+        </div>
+
+        <button id="menu-button" class="rounded-lg border border-[#E5E5E5] p-2 md:hidden" aria-label="Open menu" aria-expanded="false">
+          <i data-lucide="menu" class="h-5 w-5"></i>
+        </button>
+      </nav>
+      <div id="mobile-menu" class="hidden border-t border-[#E5E5E5] px-6 py-6 md:hidden">
+        <div class="flex flex-col gap-5 text-base">
+          <a href="#platform">Platform</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#integrations">Integrations</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#get-started" class="rounded-lg bg-black p-3 text-center text-white">
+            Get started
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="relative overflow-hidden px-6 pb-16 pt-16 sm:pt-24 lg:px-10 lg:pb-20">
+        <div class="mx-auto max-w-7xl">
+          <div class="mx-auto max-w-4xl text-center">
+            <a href="#platform" class="inline-flex items-center gap-3 rounded-full border border-[#E5E5E5] bg-[#F7F7F7] py-2 pl-2 pr-4 text-xs font-medium sm:text-sm">
+              <span class="rounded-full bg-black px-2.5 py-1 text-xs text-white">
+                Introducing
+              </span>
+              Your next chapter in payments
+              <i data-lucide="arrow-right" class="h-3.5 w-3.5"></i>
+            </a>
+
+            <h1 class="mt-8 text-5xl font-medium leading-[1.06] tracking-tight sm:text-6xl lg:text-8xl">
+              Money moves.
+              <br>
+              <span class="text-neutral-400">Make it effortless.</span>
+            </h1>
+
+            <p class="mx-auto mt-7 max-w-xl text-lg leading-relaxed text-[#666666] sm:text-xl">
+              Accept payments. Send payouts. Grow without limits.
+              <br class="hidden sm:block">
+              One powerful platform. Zero unnecessary friction.
+            </p>
+
+            <div class="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <a href="#get-started" class="flex w-full items-center justify-center gap-7 rounded-lg bg-black px-6 py-4 text-base font-medium text-white transition hover:bg-neutral-800 sm:w-auto">
+                Start building for free
+                <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+              </a>
+              <a href="#platform" class="flex w-full items-center justify-center gap-3 rounded-lg border border-[#E5E5E5] bg-white px-6 py-4 text-base font-medium transition hover:bg-[#F7F7F7] sm:w-auto">
+                <i data-lucide="play" class="h-4 w-4"></i>
+                Explore the platform
+              </a>
+            </div>
+
+            <p class="mt-5 text-xs text-[#666666]">
+              No setup fees
+              <span class="mx-2">·</span>
+              No long-term commitments
+            </p>
+          </div>
+
+          <div class="relative mx-auto mt-14 max-w-5xl rounded-3xl border border-[#E5E5E5] bg-[#F7F7F7] p-3 sm:mt-16 sm:p-6">
+            <div class="overflow-hidden rounded-xl border border-[#E5E5E5] bg-white shadow-[0_15px_50px_-25px_rgba(0,0,0,0.2)]">
+              <div class="flex h-12 items-center gap-1.5 border-b border-[#E5E5E5] px-5">
+                <span class="h-2 w-2 rounded-full bg-neutral-300"></span>
+                <span class="h-2 w-2 rounded-full bg-neutral-300"></span>
+                <span class="h-2 w-2 rounded-full bg-neutral-300"></span>
+                <div class="mx-auto flex items-center gap-2 pr-10 text-xs text-[#666666]">
+                  <i data-lucide="lock-keyhole" class="h-3 w-3"></i>
+                  app.gsmpay.com
+                </div>
+              </div>
+
+              <div class="flex">
+                <aside class="hidden w-48 shrink-0 border-r border-[#E5E5E5] p-5 md:block">
+                  <div class="mb-8 flex items-center gap-2 text-base font-semibold">
+                    <i data-lucide="move-up-right" class="h-5 w-5"></i>
+                    GSMpay
+                  </div>
+                  <div class="space-y-2 text-xs">
+                    <div class="flex items-center gap-3 rounded-lg bg-[#F7F7F7] px-3 py-2.5 font-medium">
+                      <i data-lucide="layout-dashboard" class="h-4 w-4"></i>
+                      Overview
+                    </div>
+                    <div class="flex items-center gap-3 px-3 py-2.5 text-[#666666]">
+                      <i data-lucide="arrow-left-right" class="h-4 w-4"></i>
+                      Transactions
+                    </div>
+                    <div class="flex items-center gap-3 px-3 py-2.5 text-[#666666]">
+                      <i data-lucide="wallet" class="h-4 w-4"></i>
+                      Balances
+                    </div>
+                    <div class="flex items-center gap-3 px-3 py-2.5 text-[#666666]">
+                      <i data-lucide="users" class="h-4 w-4"></i>
+                      Customers
+                    </div>
+                    <div class="flex items-center gap-3 px-3 py-2.5 text-[#666666]">
+                      <i data-lucide="chart-no-axes-combined" class="h-4 w-4"></i>
+                      Reports
+                    </div>
+                  </div>
+                  <div class="mt-24 flex items-center gap-3 rounded-lg border border-[#E5E5E5] p-2">
+                    <div class="flex h-7 w-7 items-center justify-center rounded-md bg-black text-xs text-white">
+                      S
+                    </div>
+                    <div>
+                      <p class="text-xs font-medium">Studio, Inc.</p>
+                      <p class="text-xs text-[#666666]">Your workspace</p>
+                    </div>
+                  </div>
+                </aside>
+
+                <div class="min-w-0 flex-1 p-5 sm:p-7">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <p class="text-xs text-[#666666]">
+                        Your business at a glance
+                      </p>
+                      <h2 class="mt-1 text-xl font-medium">Overview</h2>
+                    </div>
+                    <span class="flex items-center gap-2 rounded-md border border-[#E5E5E5] px-3 py-2 text-xs">
+                      <i data-lucide="calendar-days" class="h-3.5 w-3.5"></i>
+                      This month
+                    </span>
+                  </div>
+
+                  <div class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <div class="rounded-lg border border-[#E5E5E5] p-4">
+                      <p class="text-xs text-[#666666]">Total revenue</p>
+                      <p class="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
+                        $128,450
+                        <span class="text-lg text-neutral-400">.00</span>
+                      </p>
+                      <p class="mt-2 text-xs text-[#666666]">
+                        <span class="font-medium text-black">↗ 24.8%</span>
+                        vs. last month
+                      </p>
+                    </div>
+                    <div class="rounded-lg border border-[#E5E5E5] p-4">
+                      <p class="text-xs text-[#666666]">Transactions</p>
+                      <p class="mt-2 text-2xl font-medium tracking-tight sm:text-3xl">
+                        8,492
+                      </p>
+                      <p class="mt-2 text-xs text-[#666666]">
+                        <span class="font-medium text-black">↗ 18.6%</span>
+                        vs. last month
+                      </p>
+                    </div>
+                    <div class="hidden rounded-lg border border-[#E5E5E5] p-4 sm:block">
+                      <p class="text-xs text-[#666666]">Success rate</p>
+                      <p class="mt-2 text-3xl font-medium tracking-tight">
+                        99.98
+                        <span class="text-lg text-neutral-400">%</span>
+                      </p>
+                      <p class="mt-2 text-xs text-[#666666]">
+                        Built for peace of mind
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="mt-5 rounded-lg border border-[#E5E5E5] p-4">
+                    <div class="flex items-center justify-between text-xs">
+                      <span class="font-medium">Revenue overview</span>
+                      <span class="flex items-center gap-1.5 text-[#666666]">
+                        <span class="h-1.5 w-1.5 rounded-full bg-black"></span>
+                        Revenue
+                      </span>
+                    </div>
+                    <div class="relative mt-5 h-36">
+                      <div class="absolute inset-0 flex flex-col justify-between pb-5">
+                        <div class="border-t border-dashed border-[#E5E5E5]"></div>
+                        <div class="border-t border-dashed border-[#E5E5E5]"></div>
+                        <div class="border-t border-dashed border-[#E5E5E5]"></div>
+                      </div>
+                      <svg viewBox="0 0 600 130" class="relative h-full w-full" preserveAspectRatio="none" role="img" aria-label="Revenue trending upward throughout the month">
+                        <path d="M0 110 L25 105 L50 112 L75 85 L100 93 L125 77 L150 82 L175 58 L200 65 L225 58 L250 70 L275 46 L300 55 L325 38 L350 49 L375 25 L400 35 L425 22 L450 30 L475 13 L500 24 L525 8 L550 16 L575 4 L600 0 L600 130 L0 130Z" fill="#F7F7F7"></path>
+                        <path d="M0 110 L25 105 L50 112 L75 85 L100 93 L125 77 L150 82 L175 58 L200 65 L225 58 L250 70 L275 46 L300 55 L325 38 L350 49 L375 25 L400 35 L425 22 L450 30 L475 13 L500 24 L525 8 L550 16 L575 4 L600 0" fill="none" stroke="#000000" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+                      </svg>
+                    </div>
+                    <div class="mt-2 flex justify-between text-xs text-[#666666]">
+                      <span>Jun 01</span>
+                      <span>Jun 07</span>
+                      <span>Jun 14</span>
+                      <span>Jun 21</span>
+                      <span>Jun 30</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="absolute -bottom-6 right-7 hidden items-center gap-3 rounded-xl border border-[#E5E5E5] bg-white p-4 shadow-lg shadow-black/5 sm:flex lg:-right-8">
+              <div class="flex h-10 w-10 items-center justify-center rounded-full bg-[#F7F7F7]">
+                <i data-lucide="check" class="h-5 w-5"></i>
+              </div>
+              <div>
+                <p class="text-sm font-medium">Payment received</p>
+                <p class="mt-0.5 text-xs text-[#666666]">
+                  $2,450.00 USD · Just now
+                </p>
+              </div>
+              <i data-lucide="arrow-up-right" class="ml-5 h-4 w-4 text-[#666666]"></i>
+            </div>
+          </div>
+
+          <div class="mt-20 text-center">
+            <p class="text-sm text-[#666666]">
+              Built for ambitious businesses. Trusted by teams worldwide.
+            </p>
+            <div class="mt-8 flex flex-wrap items-center justify-center gap-x-10 gap-y-6 text-xl font-semibold tracking-tight text-neutral-500 sm:gap-x-16 sm:text-2xl">
+              <span class="flex items-center gap-2">
+                <i data-lucide="layers" class="h-6 w-6"></i>
+                Layers
+              </span>
+              <span class="flex items-center gap-2">
+                <i data-lucide="command" class="h-6 w-6"></i>
+                Quotient
+              </span>
+              <span class="flex items-center gap-2">
+                <i data-lucide="asterisk" class="h-7 w-7"></i>
+                Circooles
+              </span>
+              <span class="flex items-center gap-2">
+                <i data-lucide="triangle" class="h-6 w-6"></i>
+                Sisyphus
+              </span>
+              <span class="flex items-center gap-2">
+                <i data-lucide="box" class="h-6 w-6"></i>
+                Catalog
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="platform" class="mx-auto max-w-7xl px-6 py-20 lg:px-10 lg:py-28">
+        <div class="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-widest text-[#666666]">
+              One platform. Every possibility.
+            </p>
+            <h2 class="mt-4 text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
+              Less complexity.
+              <br>
+              More possibility.
+            </h2>
+          </div>
+          <p class="max-w-sm text-lg leading-relaxed text-[#666666]">
+            Everything your money needs to move forward, working beautifully
+            together.
+          </p>
+        </div>
+
+        <div class="mt-12 grid gap-5 lg:grid-cols-3">
+          <article class="overflow-hidden rounded-2xl border border-[#E5E5E5] bg-[#F7F7F7] lg:col-span-2">
+            <div class="p-7 sm:p-9">
+              <span class="flex h-10 w-10 items-center justify-center rounded-xl border border-[#E5E5E5] bg-white">
+                <i data-lucide="credit-card" class="h-5 w-5"></i>
+              </span>
+              <h3 class="mt-5 text-2xl font-medium tracking-tight">
+                Every way they want to pay.
+              </h3>
+              <p class="mt-3 max-w-md text-base leading-relaxed text-[#666666]">
+                Cards, bank transfers, and local payment methods. One seamless
+                checkout, wherever your customers are.
+              </p>
+            </div>
+            <div class="mx-7 -mb-1 flex justify-center gap-4 sm:mx-9">
+              <div class="w-full max-w-sm rounded-t-2xl border border-[#E5E5E5] bg-white p-5 shadow-xl shadow-black/5">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-medium">Complete your payment</span>
+                  <i data-lucide="lock-keyhole" class="h-4 w-4 text-[#666666]"></i>
+                </div>
+                <div class="mt-5 flex items-center justify-between rounded-lg bg-[#F7F7F7] p-3">
+                  <span class="text-sm text-[#666666]">Total amount</span>
+                  <span class="text-lg font-medium">$249.00</span>
+                </div>
+                <div class="mt-4 flex items-center gap-3 rounded-lg border border-black p-3">
+                  <i data-lucide="credit-card" class="h-4 w-4"></i>
+                  <span class="text-sm">Pay with card</span>
+                  <span class="ml-auto flex h-4 w-4 items-center justify-center rounded-full border border-black">
+                    <span class="h-2 w-2 rounded-full bg-black"></span>
+                  </span>
+                </div>
+                <div class="mt-3 flex items-center gap-3 rounded-lg border border-[#E5E5E5] p-3 text-[#666666]">
+                  <i data-lucide="landmark" class="h-4 w-4"></i>
+                  <span class="text-sm">Bank transfer</span>
+                  <span class="ml-auto h-4 w-4 rounded-full border border-neutral-300"></span>
+                </div>
+                <div class="mt-4 rounded-lg bg-black p-3 text-center text-sm text-white">
+                  Pay $249.00
+                  <span class="ml-2">→</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="flex flex-col overflow-hidden rounded-2xl bg-black p-7 text-white sm:p-9">
+            <span class="flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-700">
+              <i data-lucide="globe-2" class="h-5 w-5"></i>
+            </span>
+            <h3 class="mt-5 text-2xl font-medium tracking-tight">
+              Local feel.
+              <br>
+              Global reach.
+            </h3>
+            <p class="mt-3 text-base leading-relaxed text-neutral-400">
+              Turn borders into opportunities. Move money in 135+ currencies,
+              without the extra complexity.
+            </p>
+            <div class="relative mx-auto mt-8 flex h-48 w-48 items-center justify-center rounded-full border border-neutral-700">
+              <div class="absolute h-48 w-24 rounded-[50%] border border-neutral-700"></div>
+              <div class="absolute h-48 w-36 rounded-[50%] border border-neutral-700"></div>
+              <div class="absolute h-24 w-48 rounded-[50%] border border-neutral-700"></div>
+              <div class="absolute h-px w-full bg-neutral-700"></div>
+              <span class="z-10 flex h-12 w-12 items-center justify-center rounded-full bg-white text-black">
+                <i data-lucide="move-up-right" class="h-6 w-6"></i>
+              </span>
+              <span class="absolute -right-3 top-7 rounded-full border border-neutral-700 bg-black px-3 py-1.5 text-xs">
+                USD ↗
+              </span>
+              <span class="absolute -left-4 bottom-8 rounded-full border border-neutral-700 bg-black px-3 py-1.5 text-xs">
+                EUR ↗
+              </span>
+            </div>
+          </article>
+
+          <article class="rounded-2xl border border-[#E5E5E5] p-7 sm:p-9">
+            <i data-lucide="zap" class="h-6 w-6"></i>
+            <h3 class="mt-6 text-xl font-medium tracking-tight">
+              Payouts, at your pace.
+            </h3>
+            <p class="mt-3 text-base leading-relaxed text-[#666666]">
+              Pay people, partners, and suppliers in seconds. Not business days.
+            </p>
+            <div class="mt-7 flex items-center gap-3 rounded-lg bg-[#F7F7F7] p-3">
+              <i data-lucide="circle-check" class="h-5 w-5"></i>
+              <span class="text-sm">Sent. Settled. Simple.</span>
+            </div>
+          </article>
+
+          <article class="rounded-2xl border border-[#E5E5E5] p-7 sm:p-9">
+            <i data-lucide="shield-check" class="h-6 w-6"></i>
+            <h3 class="mt-6 text-xl font-medium tracking-tight">
+              Security comes standard.
+            </h3>
+            <p class="mt-3 text-base leading-relaxed text-[#666666]">
+              Smart fraud prevention and enterprise-grade encryption protect
+              every transaction.
+            </p>
+            <div class="mt-7 flex items-center gap-3 text-xs text-[#666666]">
+              <span class="rounded-md border border-[#E5E5E5] px-3 py-2">
+                PCI DSS
+              </span>
+              <span class="rounded-md border border-[#E5E5E5] px-3 py-2">
+                256-bit encryption
+              </span>
+            </div>
+          </article>
+
+          <article class="rounded-2xl border border-[#E5E5E5] p-7 sm:p-9">
+            <i data-lucide="chart-no-axes-combined" class="h-6 w-6"></i>
+            <h3 class="mt-6 text-xl font-medium tracking-tight">
+              Clarity in every number.
+            </h3>
+            <p class="mt-3 text-base leading-relaxed text-[#666666]">
+              Real-time insights turn your payment data into your next best
+              business decision.
+            </p>
+            <a href="#get-started" class="mt-8 inline-flex items-center gap-3 text-sm font-medium">
+              Meet your dashboard
+              <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+            </a>
+          </article>
+        </div>
+      </section>
+
+      <section class="bg-black px-6 py-20 text-white lg:px-10">
+        <div class="mx-auto max-w-7xl">
+          <div class="flex flex-col justify-between gap-5 md:flex-row md:items-end">
+            <h2 class="text-3xl font-medium tracking-tight sm:text-4xl">
+              Big ambitions.
+              <br>
+              <span class="text-neutral-400">Meet serious infrastructure.</span>
+            </h2>
+            <p class="max-w-sm text-base leading-relaxed text-neutral-400">
+              Quietly powerful technology, built to keep your business moving.
+              Every second of every day.
+            </p>
+          </div>
+          <div class="mt-14 grid grid-cols-2 gap-8 border-t border-neutral-800 pt-10 lg:grid-cols-4">
+            <div>
+              <p class="text-4xl font-medium tracking-tight sm:text-5xl">
+                99.99%
+              </p>
+              <p class="mt-3 text-sm text-neutral-400">Uptime, by design</p>
+            </div>
+            <div>
+              <p class="text-4xl font-medium tracking-tight sm:text-5xl">
+                135+
+              </p>
+              <p class="mt-3 text-sm text-neutral-400">Currencies supported</p>
+            </div>
+            <div>
+              <p class="text-4xl font-medium tracking-tight sm:text-5xl">
+                24/7
+              </p>
+              <p class="mt-3 text-sm text-neutral-400">
+                Monitoring and support
+              </p>
+            </div>
+            <div>
+              <p class="text-4xl font-medium tracking-tight sm:text-5xl">One</p>
+              <p class="mt-3 text-sm text-neutral-400">Connected platform</p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="how-it-works" class="mx-auto max-w-7xl px-6 py-20 lg:px-10 lg:py-28">
+        <div class="max-w-2xl">
+          <p class="text-xs font-medium uppercase tracking-widest text-[#666666]">
+            From idea to first payment
+          </p>
+          <h2 class="mt-4 text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
+            Less setup.
+            <br>
+            More momentum.
+          </h2>
+          <p class="mt-5 text-lg leading-relaxed text-[#666666]">
+            Get the essentials in place, connect your business, and let your
+            money move.
+          </p>
+        </div>
+        <div class="mt-12 grid gap-10 md:grid-cols-3">
+          <article class="border-t border-[#E5E5E5] pt-6">
+            <span class="text-sm text-[#666666]">01 / Get connected</span>
+            <h3 class="mt-8 text-xl font-medium tracking-tight">
+              Make yourself at home.
+            </h3>
+            <p class="mt-3 leading-relaxed text-[#666666]">
+              Create your account, tell us about your business, and bring your
+              team into one workspace.
+            </p>
+          </article>
+          <article class="border-t border-[#E5E5E5] pt-6">
+            <span class="text-sm text-[#666666]">02 / Make it yours</span>
+            <h3 class="mt-8 text-xl font-medium tracking-tight">
+              Your workflow. Your way.
+            </h3>
+            <p class="mt-3 leading-relaxed text-[#666666]">
+              Connect your tools, choose your payment methods, and build a
+              checkout that feels like you.
+            </p>
+          </article>
+          <article class="border-t border-[#E5E5E5] pt-6">
+            <span class="text-sm text-[#666666]">03 / Keep moving</span>
+            <h3 class="mt-8 text-xl font-medium tracking-tight">
+              Ready for what’s next.
+            </h3>
+            <p class="mt-3 leading-relaxed text-[#666666]">
+              Accept your first payment, send payouts, and see everything come
+              together in your dashboard.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section id="integrations" class="border-y border-[#E5E5E5] bg-[#F7F7F7] px-6 py-20 lg:px-10 lg:py-28">
+        <div class="mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-2">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-widest text-[#666666]">
+              Built to fit right in
+            </p>
+            <h2 class="mt-4 text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
+              Your stack.
+              <br>
+              Now more connected.
+            </h2>
+            <p class="mt-5 max-w-md text-lg leading-relaxed text-[#666666]">
+              Bring payments into the tools and experiences you already use.
+              Flexible APIs make room for whatever you build next.
+            </p>
+            <a href="#get-started" class="mt-8 inline-flex items-center gap-3 text-sm font-medium">
+              Start building
+              <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+            </a>
+          </div>
+          <div class="overflow-hidden rounded-2xl border border-[#E5E5E5] bg-white shadow-xl shadow-black/5">
+            <div class="flex items-center justify-between border-b border-[#E5E5E5] px-6 py-4">
+              <span class="text-sm font-medium">One simple integration</span>
+              <span class="rounded-md bg-[#F7F7F7] px-2 py-1 text-xs text-[#666666]">
+                API
+              </span>
+            </div>
+            <pre class="overflow-x-auto p-6 text-sm leading-8 text-[#666666]"><code><span class="text-black">const</span> payment = <span class="text-black">await</span> gsmpay.payments.create({
+  amount: 24900,
+  currency: 'USD',
+  description: 'Your next big thing'
+});</code></pre>
+            <div class="flex items-center gap-2 border-t border-[#E5E5E5] px-6 py-4 text-xs text-[#666666]">
+              <i data-lucide="check" class="h-4 w-4 text-black"></i>
+              Simple to integrate. Built to scale.
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="pricing" class="mx-auto max-w-7xl px-6 py-20 lg:px-10 lg:py-28">
+        <div class="mx-auto max-w-2xl text-center">
+          <p class="text-xs font-medium uppercase tracking-widest text-[#666666]">
+            Straightforward by design
+          </p>
+          <h2 class="mt-4 text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
+            Clear pricing.
+            <br>
+            No unnecessary extras.
+          </h2>
+          <p class="mt-5 text-lg leading-relaxed text-[#666666]">
+            Start where you are. Find the right fit for where you’re going.
+          </p>
+        </div>
+        <div class="mx-auto mt-12 grid max-w-4xl gap-5 md:grid-cols-2">
+          <article class="rounded-2xl border border-[#E5E5E5] p-7 sm:p-9">
+            <span class="text-sm font-medium">For growing businesses</span>
+            <h3 class="mt-5 text-3xl font-medium tracking-tight">
+              Start simple.
+            </h3>
+            <p class="mt-3 leading-relaxed text-[#666666]">
+              The essentials to accept payments and keep your operations moving.
+            </p>
+            <ul class="mt-7 space-y-4 text-sm">
+              <li class="flex gap-3">
+                <i data-lucide="check" class="h-4 w-4 shrink-0"></i>
+                No setup fees or long-term commitments
+              </li>
+              <li class="flex gap-3">
+                <i data-lucide="check" class="h-4 w-4 shrink-0"></i>
+                Payments and payouts in one place
+              </li>
+              <li class="flex gap-3">
+                <i data-lucide="check" class="h-4 w-4 shrink-0"></i>
+                Real-time reporting and insights
+              </li>
+            </ul>
+            <a href="#get-started" class="mt-9 flex items-center justify-between rounded-lg bg-black px-5 py-3 text-sm font-medium text-white transition hover:bg-neutral-800">
+              Get started
+              <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+            </a>
+          </article>
+          <article class="rounded-2xl bg-black p-7 text-white sm:p-9">
+            <span class="text-sm font-medium text-neutral-400">
+              For bigger ambitions
+            </span>
+            <h3 class="mt-5 text-3xl font-medium tracking-tight">
+              Scale your way.
+            </h3>
+            <p class="mt-3 leading-relaxed text-neutral-400">
+              A tailored approach for complex operations and higher payment
+              volumes.
+            </p>
+            <ul class="mt-7 space-y-4 text-sm">
+              <li class="flex gap-3">
+                <i data-lucide="check" class="h-4 w-4 shrink-0"></i>
+                Custom pricing for your business
+              </li>
+              <li class="flex gap-3">
+                <i data-lucide="check" class="h-4 w-4 shrink-0"></i>
+                Integration and migration guidance
+              </li>
+              <li class="flex gap-3">
+                <i data-lucide="check" class="h-4 w-4 shrink-0"></i>
+                Dedicated support as you grow
+              </li>
+            </ul>
+            <a href="#contact" class="mt-9 flex items-center justify-between rounded-lg bg-white px-5 py-3 text-sm font-medium text-black transition hover:bg-neutral-200">
+              Contact sales
+              <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+            </a>
+          </article>
+        </div>
+      </section>
+      <section id="get-started" class="bg-[#F7F7F7] px-6 py-20 lg:px-10 lg:py-28">
+        <div class="mx-auto max-w-3xl text-center">
+          <span class="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-black text-white">
+            <i data-lucide="move-up-right" class="h-7 w-7"></i>
+          </span>
+          <h2 class="mt-7 text-4xl font-medium leading-tight tracking-tight sm:text-6xl">
+            Your next move.
+            <br>
+            <span class="text-neutral-400">Starts here.</span>
+          </h2>
+          <p class="mx-auto mt-6 max-w-lg text-lg leading-relaxed text-[#666666]">
+            Less friction between you and what’s next. Let’s build a better way
+            to move money.
+          </p>
+          <div class="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <a href="mailto:hello@gsmpay.com?subject=Get%20started%20with%20GSMpay" class="flex w-full items-center justify-center gap-7 rounded-lg bg-black px-6 py-4 text-base font-medium text-white transition hover:bg-neutral-800 sm:w-auto">
+              Get started
+              <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+            </a>
+            <a href="#contact" class="flex w-full items-center justify-center gap-3 rounded-lg border border-[#E5E5E5] bg-white px-6 py-4 text-base font-medium transition hover:bg-neutral-100 sm:w-auto">
+              Talk to our team
+            </a>
+          </div>
+          <p class="mt-5 text-xs text-[#666666]">
+            No setup fees
+            <span class="mx-2">·</span>
+            No long-term commitments
+          </p>
+        </div>
+      </section>
+    </main>
+    <footer id="contact" class="border-t border-[#E5E5E5] px-6 pb-8 pt-16 lg:px-10">
+      <div class="mx-auto max-w-7xl">
+        <div class="grid gap-10 pb-14 md:grid-cols-2 lg:grid-cols-4">
+          <div class="lg:col-span-2">
+            <a href="#" class="inline-flex items-center gap-2.5 text-2xl font-semibold tracking-tight" aria-label="GSMpay home">
+              <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-black text-white">
+                <i data-lucide="move-up-right" class="h-6 w-6"></i>
+              </span>
+              GSMpay
+              <span class="-ml-2 text-xl font-normal">®</span>
+            </a>
+            <p class="mt-5 max-w-xs text-sm leading-relaxed text-[#666666]">
+              Payments, without the friction.
+              <br>
+              Built for your next chapter.
+            </p>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium">Explore</h3>
+            <nav aria-label="Footer navigation" class="mt-5 flex flex-col items-start gap-4 text-sm text-[#666666]">
+              <a href="#platform" class="hover:text-black">Platform</a>
+              <a href="#how-it-works" class="hover:text-black">How it works</a>
+              <a href="#integrations" class="hover:text-black">Integrations</a>
+              <a href="#pricing" class="hover:text-black">Pricing</a>
+            </nav>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium">Let’s talk</h3>
+            <p class="mt-5 text-sm leading-relaxed text-[#666666]">
+              Have a question or a big idea?
+              <br>
+              We’d love to hear it.
+            </p>
+            <a href="mailto:hello@gsmpay.com" class="mt-4 inline-flex items-center gap-2 text-sm font-medium">
+              hello@gsmpay.com
+              <i data-lucide="arrow-up-right" class="h-4 w-4"></i>
+            </a>
+          </div>
+        </div>
+        <div class="flex flex-col justify-between gap-4 border-t border-[#E5E5E5] pt-7 text-xs text-[#666666] sm:flex-row">
+          <p>© 2026 GSMpay. All rights reserved.</p>
+          <p>Money moves. Make it effortless.</p>
+        </div>
+      </div>
+    </footer>
+    <script>
+      if (window.lucide) { lucide.createIcons(); } const menuButton = document.getElementById('menu-button'); const mobileMenu = document.getElementById('mobile-menu'); if (menuButton && mobileMenu) { menuButton.addEventListener('click', () => { const expanded = menuButton.getAttribute('aria-expanded') === 'true'; menuButton.setAttribute('aria-expanded', String(!expanded)); menuButton.setAttribute('aria-label', expanded ? 'Open menu' : 'Close menu'); mobileMenu.classList.toggle('hidden', expanded); }); mobileMenu.querySelectorAll('a').forEach(link => { link.addEventListener('click', () => { mobileMenu.classList.add('hidden'); menuButton.setAttribute('aria-expanded', 'false'); menuButton.setAttribute('aria-label', 'Open menu'); }); }); }
+    </script>
+  
+</body></html>

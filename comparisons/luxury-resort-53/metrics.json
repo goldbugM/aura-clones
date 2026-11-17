@@ -1,0 +1,33 @@
+{
+ "slug": "luxury-resort-53",
+ "overall": 0.711,
+ "structure": 1.0,
+ "copy": 1.0,
+ "design": 0.04,
+ "motion": 0.263,
+ "media": 1.0,
+ "pixel": 0.772,
+ "text_similarity": 1.0,
+ "sections": [
+  8,
+  8
+ ],
+ "headings": [
+  26,
+  26
+ ],
+ "missing_headings": [],
+ "missing_fonts": [],
+ "img_counts": [
+  13,
+  13
+ ],
+ "heights": [
+  7344,
+  7344
+ ],
+ "console_errors": 0,
+ "failed_requests": 0,
+ "shell_render_original": false,
+ "side_by_side": true
+}
